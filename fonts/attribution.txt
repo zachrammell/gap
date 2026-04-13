@@ -1,0 +1,3 @@
+Additional tools used for icons:
+* https://iconly.io/ -- To generate TTF.
+* FontForge -- To extract icons.
