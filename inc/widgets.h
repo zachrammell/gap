@@ -12,22 +12,11 @@ namespace UI::Widgets
     {
         Zero,
         // Define builtin IDs for large components we know about.
-        EditorLayoutEngine,
         Help,
-        FileExplorerWindow,
-        SearchTerm,
-        SaveAs,
-        FindReplace,
-        UndoGraph,
-        Chooser,
         ConfigExplorer,
-        Suggest,
-        CommandPalette,
-        ConfirmDlg,
-        SimpleSysCommand,
         ArenaReport,
-        CustomHotkeyBuilder,
-        FindAllManager,
+        DiffPanel,
+        ConfirmDlg,
 
         IdStart,
 

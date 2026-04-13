@@ -17,6 +17,7 @@
 #include "config-explorer.h"
 #include "config.h"
 #include "constants.h"
+#include "diff-panel.h"
 #include "enum-utils.h"
 #include "feed.h"
 #include "gap-strings.h"
@@ -131,6 +132,7 @@ struct RenderCoreData
     Render::FrameRenderer* renderer;
     Glyph::Atlas* atlas;
     Feed::MessageFeed* feed;
+    Diff::DiffPanel* diff_panel;
     Config::Explorer* config_explorer;
     Help::Help* help;
     MsFrameCounter* ms_frame_counter;
@@ -698,6 +700,7 @@ void render_core(RenderCoreData* data)
 
     // Build viewer last because widgets are layered on top.
     {
+        Diff::build_diff_panel(data->diff_panel, data->cmd_lst, data->core_draw_lst, data->ui_state, data->feed);
     }
 
     // Special overlay for hotkey binding.
@@ -1402,6 +1405,7 @@ int gap_main_entry(int argc, char** argv)
     Config::Explorer config_explorer{ &atlas };
     Help::Help help{ &atlas };
     Arena::Report::ArenaReport arena_report{ &atlas };
+    Diff::DiffPanel* diff_panel = Diff::make_diff_panel(&atlas);
 
     // Setup various command palettes.
     atlas.sync_config();
@@ -1415,6 +1419,7 @@ int gap_main_entry(int argc, char** argv)
         .renderer = renderer,
         .atlas = &atlas,
         .feed = &message_feed,
+        .diff_panel = diff_panel,
         .config_explorer = &config_explorer,
         .help = &help,
         .ms_frame_counter = &ms_frame_counter,
@@ -1568,6 +1573,7 @@ namespace UI
 #include "concurrent-queue.cpp"
 #include "config-explorer.cpp"
 #include "config.cpp"
+#include "diff-panel.cpp"
 #include "feed.cpp"
 #include "file-tracker.cpp"
 #include "gap-strings.cpp"
