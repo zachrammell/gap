@@ -224,14 +224,17 @@ void build_help(RenderCoreData* data)
 
     if (resp.reload_hotkeys)
     {
-    }
-
-    if (resp.remove_id != CustomHotkeyID::None)
-    {
-    }
-
-    if (resp.open_hk_builder)
-    {
+        if (Hotkeys::load(Config::hotkey_state().hotkeys, data->feed))
+        {
+            char fmt_buf[512];
+            String8 msg = fmt_string(fmt_buf, "Hotkeys reloaded at: %S", Config::hotkey_state().hotkeys);
+            data->feed->queue_info(msg);
+            notify_hotkey_update(data);
+        }
+        else
+        {
+            data->feed->queue_warning("Hotkeys failed to reload.");
+        }
     }
 
     if (resp.close)

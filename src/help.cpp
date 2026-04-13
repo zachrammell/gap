@@ -1353,7 +1353,6 @@ namespace Help
                 if (hk_resp.builder_id != Hotkeys::CustomHotkeyID::None)
                 {
                     resp.builder_id = hk_resp.builder_id;
-                    resp.open_hk_builder = true;
                 }
 
                 if (hk_resp.remove_id != Hotkeys::CustomHotkeyID::None)

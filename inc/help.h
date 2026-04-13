@@ -18,7 +18,6 @@ namespace Help
         Hotkeys::CustomHotkeyGroup group = {};
         bool close = false;
         bool reload_hotkeys = false;
-        bool open_hk_builder = false;
     };
 
     class Help
