@@ -1,5 +1,6 @@
 #include "diff-panel.h"
 
+#include "diff-text.h"
 #include "gap-core.h"
 
 namespace Diff
@@ -14,6 +15,7 @@ namespace Diff
             PartitionPanel* sib_prev;
             CmdBuffer::DrawList* draw_lst;
             UI::Widgets::ID id;
+            DiffTextView* view;
             float pct_of_parent;
             float ease_offset;
         };
@@ -47,13 +49,15 @@ namespace Diff
             return UI::vec_as_clip(clip);
         }
 
-        void init_panel(PartitionPanel* panel, UI::Widgets::ID seed_id, uint32_t seed_idx)
+        void init_panel(PartitionPanel* panel, UI::Widgets::ID seed_id, uint32_t seed_idx, Glyph::Atlas* atlas)
         {
             panel->id = UI::Widgets::make_id_seed_idx(seed_id, seed_idx);
             panel->draw_lst = CmdBuffer::alloc_draw_list();
             panel->ease_offset = 1.f;
             panel->pct_of_parent = .5f;
             panel->sib_next = panel->sib_prev = null_panel();
+            // Allocate the diff text view.
+            panel->view = make_diff_text_view(atlas, UI::Widgets::make_id_seed(panel->id, "txt_view"));
         }
     } // namespace [anon]
 
@@ -76,8 +80,8 @@ namespace Diff
         panel->atlas = atlas;
         panel->frame_lst = CmdBuffer::alloc_draw_list();
         panel->id = UI::Widgets::ID::DiffPanel;
-        init_panel(&panel->A, panel->id, 0);
-        init_panel(&panel->B, panel->id, 1);
+        init_panel(&panel->A, panel->id, 0, atlas);
+        init_panel(&panel->B, panel->id, 1, atlas);
         // Connect A and B.
         panel->A.sib_next = &panel->B;
         panel->B.sib_prev = &panel->A;
@@ -87,11 +91,28 @@ namespace Diff
     // Cleanup.
     void release_diff_panel(DiffPanel* panel)
     {
+        for (PartitionPanel* child = &panel->A;
+            not null_panel(child);
+            child = child->sib_next)
+        {
+            release_diff_text_view(child->view);
+        }
         CmdBuffer::release_draw_list(panel->frame_lst);
         CmdBuffer::release_draw_list(panel->A.draw_lst);
         CmdBuffer::release_draw_list(panel->B.draw_lst);
         Arena::Arena* arena = panel->arena;
         Arena::release(arena);
+    }
+
+    // Interaction.
+    void file_A(DiffPanel* panel, const TextFile& file)
+    {
+        populate_text(panel->A.view, file);
+    }
+
+    void file_B(DiffPanel* panel, const TextFile& file)
+    {
+        populate_text(panel->B.view, file);
     }
 
     // Building.
@@ -120,7 +141,8 @@ namespace Diff
             Vec4f region_color = Config::widget_colors().outline_selection;
             const float boundary_width_bias = Config::diff_state().diff_font_size / 3.f;
             for (PartitionPanel* child = &panel->A;
-                not null_panel(child);
+                // Non-leaf UI does only involves inner-panels (e.g. the fence post problem).
+                not null_panel(child) and not null_panel(child->sib_next);
                 child = child->sib_next)
             {
                 PartitionPanel* sib = child->sib_next;
@@ -213,6 +235,31 @@ namespace Diff
                     change_cursor(state, UI::CursorStyle::LeftRightArrow);
                 }
             }
+        }
+
+        // Build leaf-UI.
+        for (PartitionPanel* child = &panel->A;
+            not null_panel(child);
+            child = child->sib_next)
+        {
+            CmdBuffer::ClipRect child_clip = clip_from_parent(clip, &panel->A, child);
+            // Setup command buffer for panel.
+            CmdBuffer::new_frame(child->draw_lst, core_lst->screen, { .dt = core_lst->delta_time, .app_time = core_lst->app_time });
+            // Create the rect.
+            CmdBuffer::push_clip(child->draw_lst, child_clip);
+            // Default texture (atlas by default).
+            CmdBuffer::push_texture(child->draw_lst, panel->atlas->atlas_texture());
+            // Default palette.
+            CmdBuffer::push_color_palette(child->draw_lst, *CmdBuffer::current_palette(*core_lst));
+
+            // Build core widget.
+            build_diff_text_view(child->view, child->draw_lst, state);
+
+            CmdBuffer::pop_clip(child->draw_lst);
+            CmdBuffer::pop_texture(child->draw_lst);
+            CmdBuffer::pop_color_palette(child->draw_lst);
+
+            CmdBuffer::push_draw_list(cmd_lst, child->draw_lst);
         }
 
         CmdBuffer::pop_clip(panel->frame_lst);

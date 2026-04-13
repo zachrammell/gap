@@ -17,6 +17,7 @@
 #include "config-explorer.h"
 #include "config.h"
 #include "constants.h"
+#include "diff-core.h"
 #include "diff-panel.h"
 #include "enum-utils.h"
 #include "feed.h"
@@ -1440,12 +1441,26 @@ int gap_main_entry(int argc, char** argv)
         String8 path_to_open = str8_empty;
         if (argc > 1)
         {
+            auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+            bool loaded_a = false;
             for (int i = 1; i < argc; ++i)
             {
                 String8 path = str8_cstr(argv[i]);
                 if (OS::regular_file_exists(path))
                 {
-                    // TODO: Load A/B files.
+                    // Create a temp arena so we can do this lots of times.
+                    auto tmp = Arena::temp_begin(scratch.arena);
+                    Diff::TextFile file = Diff::text_file_read(tmp.arena, path);
+                    if (not loaded_a)
+                    {
+                        Diff::file_A(diff_panel, file);
+                        loaded_a = true;
+                    }
+                    else
+                    {
+                        Diff::file_B(diff_panel, file);
+                    }
+                    Arena::temp_end(tmp);
                 }
                 else
                 {
@@ -1454,6 +1469,7 @@ int gap_main_entry(int argc, char** argv)
                     message_feed.queue_error(msg);
                 }
             }
+            Arena::scratch_end(scratch);
         }
     }
 
@@ -1573,7 +1589,9 @@ namespace UI
 #include "concurrent-queue.cpp"
 #include "config-explorer.cpp"
 #include "config.cpp"
+#include "diff-core.cpp"
 #include "diff-panel.cpp"
+#include "diff-text.cpp"
 #include "feed.cpp"
 #include "file-tracker.cpp"
 #include "gap-strings.cpp"

@@ -1221,10 +1221,12 @@ namespace Render
     void window_end_frame(OS::OSWindow window)
     {
         D3D11RenderData* rend_data = d3d_render_backend_data();
-        for EachNode(n, rend_data->flush_buffer_list.first)
+        while (rend_data->flush_buffer_list.first != nullptr)
         {
+            D3DEntity* n = rend_data->flush_buffer_list.first;
             n->buffers.vert_buf->Release();
             n->buffers.idx_buf->Release();
+            release_render_entity(rend_data, &rend_data->flush_buffer_list, n);
         }
         rend_data->flush_buffer_list = {};
         OS::swap_buffers(window);

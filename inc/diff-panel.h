@@ -1,5 +1,6 @@
 #pragma once
 
+#include "diff-core.h"
 #include "glyph-cache.h"
 #include "ui-common.h"
 
@@ -12,6 +13,10 @@ namespace Diff
 
     // Cleanup.
     void release_diff_panel(DiffPanel* panel);
+
+    // Interaction.
+    void file_A(DiffPanel* panel, const TextFile& file);
+    void file_B(DiffPanel* panel, const TextFile& file);
 
     // Building.
     void build_diff_panel(DiffPanel* panel,
