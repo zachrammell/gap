@@ -201,9 +201,11 @@ namespace Diff
     {
         DiffTextViewResponse resp = {};
         CmdBuffer::ClipRect clip = CmdBuffer::current_clip(*lst);
-        Glyph::RenderFontContext font_ctx = widget->atlas->render_font_context(Glyph::FontSize{ Config::diff_state().diff_font_size });
-        UI::Widgets::IndexedScrollContentSize scroll_size = content_size(widget, &font_ctx);
         const Config::DiffColors& colors = Config::diff_colors();
+        Glyph::RenderFontContext font_ctx = widget->atlas->render_font_context(Glyph::FontSize{ Config::diff_state().diff_font_size });
+        font_ctx.render_whitespace(Config::system_effects().render_whitespace);
+        font_ctx.whitespace_color(colors.whitespace);
+        UI::Widgets::IndexedScrollContentSize scroll_size = content_size(widget, &font_ctx);
 
         const float wheel_offset_amt = UI::standard_font_padding(Glyph::FontSize{ font_ctx.current_font_size() }) * 2.f;
         const int line_height = font_ctx.current_font_line_height();
@@ -324,7 +326,8 @@ namespace Diff
                     txt = str8_substr(widget->text.content, { .off = rep(l.first), .len = rep(distance(l.first, l.last)) });
                     break;
                 case EditType::Eq:
-                    pos = font_ctx.render_text(lst, " ", pos, colors.eq_txt);
+                    // Just shift the text past the marker.
+                    pos.x += glyph_width_est;
                     txt = str8_substr(widget->text.content, { .off = rep(l.first), .len = rep(distance(l.first, l.last)) });
                     break;
                 case EditType::Invalid:

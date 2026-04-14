@@ -259,6 +259,7 @@ namespace Config
         DiffColors diff_colors_instance =
         {
             .background                 = hex_to_vec4f(0x1F1F1FFF),
+            .whitespace                 = hex_to_vec4f(0xE3E4E229),
             .del_line                   = hex_to_vec4f(0xFF000040),
             .ins_line                   = hex_to_vec4f(0x00FF0040),
             .eq_line                    = hex_to_vec4f(0xFFFFFF40),
@@ -688,6 +689,7 @@ namespace Config
                 .light_mode = false,
                 .smooth_scroll = true,
                 .subpixel_font_aa = true,
+                .render_whitespace = true,
             };
             return effects;
         }
