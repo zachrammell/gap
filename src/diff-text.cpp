@@ -200,7 +200,8 @@ namespace Diff
                     size.y = 0.f;
                     break;
                 case EditType::Invalid:
-                    color = hex_to_vec4f(0xff00ff88);
+                    color = hex_to_vec4f(0xd4d4d4aa);
+                    color.a = 0.1f;
                     break;
                 }
 

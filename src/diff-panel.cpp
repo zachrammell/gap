@@ -197,16 +197,16 @@ namespace Diff
                 break;
             case EditType::Eq:
                 {
-                    // If there are any entries on the merge list, we need to add them now.
+                    // If there are any entries on the merge list, we need to add them now as gap entries.
                     MergedLineNode* node = lst_merge_B.first;
                     while (node != nullptr)
                     {
-                        // Add insert from B.
+                        // Add gap from B.
                         LineRange rng_b = text_file_line_range(*b, Editor::CursorLine(e->edit.idx_b));
                         MergedLine line_b = {
-                            .first = rng_b.first,
-                            .last = rng_b.last,
-                            .type = EditType::Ins,
+                            .first = Editor::CharOffset::Sentinel,
+                            .last = Editor::CharOffset::Sentinel,
+                            .type = EditType::Invalid,
                         };
                         // Insert B.
                         node->line = line_b;
