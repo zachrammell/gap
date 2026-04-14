@@ -17,6 +17,7 @@ namespace Diff
     // Interaction.
     void file_A(DiffPanel* panel, const TextFile& file);
     void file_B(DiffPanel* panel, const TextFile& file);
+    void apply_diff(DiffPanel* panel);
 
     // Building.
     void build_diff_panel(DiffPanel* panel,

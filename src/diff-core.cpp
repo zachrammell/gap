@@ -509,6 +509,30 @@ namespace Diff
         return substr;
     }
 
+    LineRange text_file_line_range(const TextFile& file, Editor::CursorLine line)
+    {
+        LineRange result = {};
+        // This is outside the file.  Return empty range.
+        // Note: Lines are 1-indexed.
+        if (rep(line) - 1 >= file.line_starts.size)
+            return result;
+        result.first = file.line_starts.array[rep(line) - 1];
+        result.last = result.first;
+        Editor::CursorLine next_l = extend(line);
+        if (rep(next_l) - 1 >= file.line_starts.size)
+        {
+            result.last = Editor::CharOffset{ file.content.size };
+        }
+        else
+        {
+            result.last = file.line_starts.array[rep(next_l) - 1];
+            // Note: We don't actually want to include the '\n' of the previous line,
+            // so we remove it here.
+            result.last = retract(result.last);
+        }
+        return result;
+    }
+
     Editor::CursorLine text_file_line_for_offset(const TextFile& file, Editor::CharOffset off)
     {
         if (file.line_starts.size <= 1)
@@ -556,7 +580,9 @@ namespace Diff
     {
         EditList result = {};
         DiffInput input = { &a, &b, same_line };
-        unified_diff_box(arena, &input, make_box(0, 0, OffT(a.line_starts.size), OffT(b.line_starts.size)), &result);
+        // Note: The box starts at 1, 1 because our lines start as 1-indexed.
+        //       The box also ends at lines + 1 as line_starts.size == last line.
+        unified_diff_box(arena, &input, make_box(1, 1, OffT(a.line_starts.size) + 1, OffT(b.line_starts.size) + 1), &result);
         return result;
     }
 } // namespace Diff

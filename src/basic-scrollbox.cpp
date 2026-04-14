@@ -500,6 +500,11 @@ namespace UI::Widgets
             return off;
         }
 
+        IndexedScrollOffset idx_scroll_no_offset(const IndexedScrollBox::Data& data)
+        {
+            return data.scroll_offset;
+        }
+
         void populate_idx_scroll_offset(IndexedScrollBox::Data* data, const IndexedScrollOffset& offset)
         {
             if (Config::system_effects().smooth_scroll)
@@ -616,6 +621,11 @@ namespace UI::Widgets
     IndexedScrollOffset IndexedScrollBox::position() const
     {
         return idx_scroll_offset(*data);
+    }
+
+    IndexedScrollOffset IndexedScrollBox::position_no_offset() const
+    {
+        return idx_scroll_no_offset(*data);
     }
 
     Render::RenderViewport IndexedScrollBox::content_viewport(const Render::RenderViewport& viewport) const

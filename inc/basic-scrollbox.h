@@ -82,6 +82,7 @@ namespace UI::Widgets
 
         // Queries for enclosed content.
         IndexedScrollOffset position() const;
+        IndexedScrollOffset position_no_offset() const;
         Render::RenderViewport content_viewport(const Render::RenderViewport& viewport) const;
         const IndexedScrollContentSize& content_size() const;
         uint64_t indices_per_view(const Render::RenderViewport& viewport) const;

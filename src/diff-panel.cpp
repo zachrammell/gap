@@ -1,5 +1,7 @@
 #include "diff-panel.h"
 
+#include <cassert>
+
 #include "diff-text.h"
 #include "gap-core.h"
 
@@ -113,6 +115,136 @@ namespace Diff
     void file_B(DiffPanel* panel, const TextFile& file)
     {
         populate_text(panel->B.view, file);
+    }
+
+    MergedLineNode* push_merge_line(Arena::Arena* arena, MergedLineList* lst, MergedLine line)
+    {
+        MergedLineNode* node = Arena::push_array<MergedLineNode>(arena, 1);
+        node->line = line;
+        SLLQueuePush(lst->first, lst->last, node);
+        ++lst->count;
+        return node;
+    }
+
+    void apply_diff(DiffPanel* panel)
+    {
+        auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+        TextFile* a = text_file(panel->A.view);
+        TextFile* b = text_file(panel->B.view);
+        EditList edits = diff_file_lines(scratch.arena, *a, *b);
+        // What we want is a sequence of 'lines' for both A and B which
+        // represent the 'merged' files together.  We will merge deletes
+        // and inserts and create 'gap' lines which will be rendered as
+        // an empty region in the text view.
+        MergedLineList lst_A = {};
+        MergedLineList lst_B = {};
+        MergedLineList lst_merge_B = {}; // This is to have as a write-back for the B list.
+        for EachNode(e, edits.first)
+        {
+            switch (e->edit.type)
+            {
+            case EditType::Del:
+                {
+                    // Add delete from A.
+                    LineRange rng_a = text_file_line_range(*a, Editor::CursorLine(e->edit.idx_a));
+                    MergedLine line_a = {
+                        .first = rng_a.first,
+                        .last = rng_a.last,
+                        .type = EditType::Del,
+                    };
+                    push_merge_line(scratch.arena, &lst_A, line_a);
+                    MergedLine line_b = {
+                        .first = Editor::CharOffset::Sentinel,
+                        .last = Editor::CharOffset::Sentinel,
+                        .type = EditType::Invalid,
+                    };
+                    push_merge_line(scratch.arena, &lst_merge_B, line_b);
+                }
+                break;
+            case EditType::Ins:
+                {
+                    // Add insert from B.
+                    LineRange rng_b = text_file_line_range(*b, Editor::CursorLine(e->edit.idx_b));
+                    MergedLine line_b = {
+                        .first = rng_b.first,
+                        .last = rng_b.last,
+                        .type = EditType::Ins,
+                    };
+                    // Try to pull from the merged list.  If we have one, we don't need to add
+                    // a sentinel to the A side.
+                    MergedLineNode* node = lst_merge_B.first;
+                    if (node == nullptr)
+                    {
+                        node = push_merge_line(scratch.arena, &lst_B, line_b);
+                        MergedLine line_a = {
+                            .first = Editor::CharOffset::Sentinel,
+                            .last = Editor::CharOffset::Sentinel,
+                            .type = EditType::Invalid,
+                        };
+                        push_merge_line(scratch.arena, &lst_A, line_a);
+                    }
+                    // We already have an entry for A.
+                    else
+                    {
+                        node->line = line_b;
+                        SLLQueuePop(lst_merge_B.first, lst_merge_B.last);
+                        node->next = nullptr;
+                        --lst_merge_B.count;
+                        SLLQueuePush(lst_B.first, lst_B.last, node);
+                        ++lst_B.count;
+                    }
+                }
+                break;
+            case EditType::Eq:
+                {
+                    // If there are any entries on the merge list, we need to add them now.
+                    MergedLineNode* node = lst_merge_B.first;
+                    while (node != nullptr)
+                    {
+                        // Add insert from B.
+                        LineRange rng_b = text_file_line_range(*b, Editor::CursorLine(e->edit.idx_b));
+                        MergedLine line_b = {
+                            .first = rng_b.first,
+                            .last = rng_b.last,
+                            .type = EditType::Ins,
+                        };
+                        // Insert B.
+                        node->line = line_b;
+                        SLLQueuePop(lst_merge_B.first, lst_merge_B.last);
+                        node->next = nullptr;
+                        --lst_merge_B.count;
+                        SLLQueuePush(lst_B.first, lst_B.last, node);
+                        ++lst_B.count;
+
+                        // Move node forward.
+                        node = lst_merge_B.first;
+                    }
+                    // Insert on both sides.
+                    LineRange rng_b = text_file_line_range(*b, Editor::CursorLine(e->edit.idx_b));
+                    LineRange rng_a = text_file_line_range(*a, Editor::CursorLine(e->edit.idx_a));
+                    MergedLine line_a = {
+                        .first = rng_a.first,
+                        .last = rng_a.last,
+                        .type = EditType::Eq,
+                    };
+                    MergedLine line_b = {
+                        .first = rng_b.first,
+                        .last = rng_b.last,
+                        .type = EditType::Eq,
+                    };
+                    push_merge_line(scratch.arena, &lst_A, line_a);
+                    push_merge_line(scratch.arena, &lst_B, line_b);
+                    assert(lst_A.count == lst_B.count);
+                }
+                break;
+            case EditType::Invalid:
+                break;
+            }
+        }
+
+        populate_diff(panel->A.view, lst_A);
+        populate_diff(panel->B.view, lst_B);
+        Arena::scratch_end(scratch);
     }
 
     // Building.
@@ -237,6 +369,13 @@ namespace Diff
             }
         }
 
+        // Note: This relies on only having the two panels.
+        DiffTextView* scroll_changed[] = {
+            nullptr,
+            nullptr
+        };
+        uint64_t scroll_idx = 0;
+
         // Build leaf-UI.
         for (PartitionPanel* child = &panel->A;
             not null_panel(child);
@@ -253,13 +392,28 @@ namespace Diff
             CmdBuffer::push_color_palette(child->draw_lst, *CmdBuffer::current_palette(*core_lst));
 
             // Build core widget.
-            build_diff_text_view(child->view, child->draw_lst, state);
+            auto r = build_diff_text_view(child->view, child->draw_lst, state);
+            scroll_changed[scroll_idx++] = r.scroll_changed ? child->view : nullptr;
 
             CmdBuffer::pop_clip(child->draw_lst);
             CmdBuffer::pop_texture(child->draw_lst);
             CmdBuffer::pop_color_palette(child->draw_lst);
 
             CmdBuffer::push_draw_list(cmd_lst, child->draw_lst);
+        }
+
+        for EachIndex(i, std::size(scroll_changed))
+        {
+            DiffTextView* view = scroll_changed[i];
+            if (view != nullptr)
+            {
+                DiffTextView* share_to = panel->A.view;
+                if (view == panel->A.view)
+                {
+                    share_to = panel->B.view;
+                }
+                share_scroll_pos(share_to, view);
+            }
         }
 
         CmdBuffer::pop_clip(panel->frame_lst);

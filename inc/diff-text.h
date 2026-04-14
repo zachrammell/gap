@@ -7,6 +7,37 @@
 
 namespace Diff
 {
+    struct MergedLine
+    {
+        Editor::CharOffset first; // First == sentinel implies gap line.
+        Editor::CharOffset last;
+        EditType type;
+    };
+
+    struct MergedLineNode
+    {
+        MergedLineNode* next;
+        MergedLine line;
+    };
+
+    struct MergedLineList
+    {
+        MergedLineNode* first;
+        MergedLineNode* last;
+        uint64_t count;
+    };
+
+    struct MergedDiffView
+    {
+        MergedLine* lines;
+        uint64_t size;
+    };
+
+    struct DiffTextViewResponse
+    {
+        bool scroll_changed;
+    };
+
     struct DiffTextView;
 
     // Creation.
@@ -17,9 +48,14 @@ namespace Diff
 
     // Interaction.
     void populate_text(DiffTextView* widget, const TextFile& text);
+    void populate_diff(DiffTextView* widget, MergedLineList lst);
+    void share_scroll_pos(DiffTextView* widget, const DiffTextView* share_from);
+
+    // Queries.
+    TextFile* text_file(DiffTextView* widget);
 
     // Building.
-    void build_diff_text_view(DiffTextView* widget,
-                                CmdBuffer::DrawList* lst,
-                                UI::UIState* state);
+    DiffTextViewResponse build_diff_text_view(DiffTextView* widget,
+                                                CmdBuffer::DrawList* lst,
+                                                UI::UIState* state);
 } // namespace Diff

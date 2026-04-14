@@ -8,8 +8,10 @@ namespace Diff
     struct DiffTextView
     {
         Arena::Arena* arena;
+        Arena::Arena* diff_arena;
         Arena::Position base_pos;
         TextFile text;
+        MergedDiffView diffs;
         uint64_t longest_line;
         UI::Widgets::IndexedScrollBox* scroll;
         Glyph::Atlas* atlas;
@@ -22,7 +24,8 @@ namespace Diff
             UI::Widgets::IndexedScrollContentSize size{};
             const int line_height = font_ctx->current_font_line_height();
             const float glyph_width_est = font_ctx->measure_text("H").x;
-            size.v_size = widget->text.line_starts.size;
+            // Prefer v-side of diffs if available.
+            size.v_size = widget->diffs.size != 0 ? widget->diffs.size : widget->text.line_starts.size;
             size.entry_size.y = static_cast<float>(line_height);
             size.entry_size.x = glyph_width_est * widget->longest_line;
 
@@ -48,6 +51,7 @@ namespace Diff
         Arena::Arena* arena = Arena::alloc(Arena::default_params);
         DiffTextView* widget = Arena::push_array<DiffTextView>(arena, 1);
         widget->arena = arena;
+        widget->diff_arena = Arena::alloc(Arena::default_params);
         // We need to do gross C++ here.
         {
             uint8_t* blob = Arena::push_array_no_zero_aligned<uint8_t>(arena,
@@ -71,6 +75,12 @@ namespace Diff
         Arena::release(arena);
     }
 
+    // Queries.
+    TextFile* text_file(DiffTextView* widget)
+    {
+        return &widget->text;
+    }
+
     // Interaction.
     void populate_text(DiffTextView* widget, const TextFile& text)
     {
@@ -87,11 +97,33 @@ namespace Diff
         widget->scroll->scroll_to({});
     }
 
-    // Building.
-    void build_diff_text_view(DiffTextView* widget,
-                                CmdBuffer::DrawList* lst,
-                                UI::UIState* state)
+    void populate_diff(DiffTextView* widget, MergedLineList lst)
     {
+        widget->diffs = {};
+        Arena::clear(widget->diff_arena);
+        widget->diffs.size = lst.count;
+        widget->diffs.lines = Arena::push_array_no_zero<MergedLine>(widget->diff_arena, widget->diffs.size);
+        uint64_t idx = 0;
+        for EachNode(n, lst.first)
+        {
+            widget->diffs.lines[idx++] = n->line;
+        }
+    }
+
+    void share_scroll_pos(DiffTextView* widget, const DiffTextView* share_from)
+    {
+        UI::Widgets::IndexedScrollOffset off = share_from->scroll->position_no_offset();
+        UI::Widgets::IndexedScrollContentSize size_target = widget->scroll->content_size();
+        off.offset.x = std::min(off.offset.x, size_target.entry_size.x);
+        widget->scroll->scroll_to(off);
+    }
+
+    // Building.
+    DiffTextViewResponse build_diff_text_view(DiffTextView* widget,
+                                                CmdBuffer::DrawList* lst,
+                                                UI::UIState* state)
+    {
+        DiffTextViewResponse resp = {};
         CmdBuffer::ClipRect clip = CmdBuffer::current_clip(*lst);
         Glyph::RenderFontContext font_ctx = widget->atlas->render_font_context(Glyph::FontSize{ Config::diff_state().diff_font_size });
         UI::Widgets::IndexedScrollContentSize scroll_size = content_size(widget, &font_ctx);
@@ -106,23 +138,26 @@ namespace Diff
             // Constrain the 'x' size here so we don't get a phantom horizontal scrollbar.
             scroll_size.entry_size.x = std::clamp(scroll_size.entry_size.x - rep(content_clip.width), 0.f, scroll_size.entry_size.x);
             widget->scroll->content_size(scroll_size);
-            widget->scroll->build(lst, state, wheel_offset_amt, UI::Widgets::BuildScrollBoxFlags::None);
+            auto r = widget->scroll->build(lst, state, wheel_offset_amt, UI::Widgets::BuildScrollBoxFlags::None);
+            resp.scroll_changed = r.scroll_changed;
         }
         CmdBuffer::push_clip(lst, content_clip);
+
+        // Find the line ranges.
+        UI::Widgets::IndexedScrollOffset off = widget->scroll->position();
+        const int lines_per_v = rep(content_clip.height) / line_height;
+        Vec2f start_pos;
+        // Note: X-offset needs to pull text to left of viewport.
+        start_pos.x = -off.offset.x;
+        start_pos.y = rep(content_clip.height) + off.offset.y - font_ctx.current_font_size();
+
         // Core text.
+        if (widget->diffs.size == 0)
         {
-            // Find the line ranges.
-            UI::Widgets::IndexedScrollOffset off = widget->scroll->position();
             // Note: the scrollbox starts at offset 0, but CursorLine is 1-indexed.
             Editor::CursorLine first = Editor::CursorLine(off.idx + 1);
-            const int lines_per_v = rep(content_clip.height) / line_height;
             Editor::CursorLine last = Editor::CursorLine{ rep(first) + (off.offset.y > 0.f) + lines_per_v };
             last = std::clamp(last, first, Editor::CursorLine{ widget->text.line_starts.size });
-
-            Vec2f start_pos;
-            // Note: X-offset needs to pull text to left of viewport.
-            start_pos.x = -off.offset.x;
-            start_pos.y = rep(content_clip.height) + off.offset.y - font_ctx.current_font_size();
 
             CmdBuffer::start_glyph_run(lst, Render::VertShader::OneOneTransform);
             for (; first <= last; first = extend(first))
@@ -132,13 +167,80 @@ namespace Diff
                 start_pos.y -= line_height;
             }
         }
+        else
+        {
+            // Note: the scrollbox starts at offset 0 and so is the diff lines.
+            uint64_t first = uint64_t(off.idx);
+            uint64_t last = first + (off.offset.y > 0.f) + lines_per_v;
+            last = std::clamp(last, first, widget->diffs.size - 1);
+            Vec4f color;
 
-        // Test.
-        CmdBuffer::start_shapes(lst, Render::VertShader::OneOneTransform);
-        UI::PosSize sz = UI::pos_size_clip(content_clip);
-        sz.pos.x = 0;
-        sz.pos.y = 0;
-        CmdBuffer::solid_rect(lst, Render::FragShader::BasicColor, sz.pos, sz.size, hex_to_vec4f(0xff000011));
+            // First, go through and add the boxes.
+            CmdBuffer::start_shapes(lst, Render::VertShader::OneOneTransform);
+            Vec2f hl_pos = start_pos;
+            // The line isn't going to be exactly centered without this slight offset.
+            constexpr float line_hl_offset = 0.13f;
+            hl_pos.y -= line_hl_offset * line_height;
+            for (uint64_t hl_line = first; hl_line <= last; ++hl_line)
+            {
+                MergedLine l = widget->diffs.lines[hl_line];
+                Vec2f size = { rep(content_clip.width) + off.offset.x, line_height + 0.f };
+                switch (l.type)
+                {
+                case EditType::Del:
+                    color = colors.del;
+                    color.a = .25f;
+                    break;
+                case EditType::Ins:
+                    color = colors.ins;
+                    color.a = .25f;
+                    break;
+                case EditType::Eq:
+                    // Tells the logic below not to render.
+                    size.y = 0.f;
+                    break;
+                case EditType::Invalid:
+                    color = hex_to_vec4f(0xff00ff88);
+                    break;
+                }
+
+                if (size.y != 0.f)
+                {
+                    CmdBuffer::solid_rect(lst, Render::FragShader::BasicColor, hl_pos, size, color);
+                }
+                hl_pos.y -= line_height;
+            }
+
+            CmdBuffer::start_glyph_run(lst, Render::VertShader::OneOneTransform);
+            for (; first <= last; ++first)
+            {
+                MergedLine l = widget->diffs.lines[first];
+                String8 txt = str8_empty;
+                Vec2f pos = start_pos;
+                switch (l.type)
+                {
+                case EditType::Del:
+                    color = colors.del;
+                    pos = font_ctx.render_text(lst, "-", pos, color);
+                    txt = str8_substr(widget->text.content, { .off = rep(l.first), .len = rep(distance(l.first, l.last)) });
+                    break;
+                case EditType::Ins:
+                    color = colors.ins;
+                    pos = font_ctx.render_text(lst, "+", pos, color);
+                    txt = str8_substr(widget->text.content, { .off = rep(l.first), .len = rep(distance(l.first, l.last)) });
+                    break;
+                case EditType::Eq:
+                    color = colors.eq;
+                    txt = str8_substr(widget->text.content, { .off = rep(l.first), .len = rep(distance(l.first, l.last)) });
+                    break;
+                case EditType::Invalid:
+                    break;
+                }
+                font_ctx.render_text(lst, txt, pos, color);
+                start_pos.y -= line_height;
+            }
+        }
         CmdBuffer::pop_clip(lst);
+        return resp;
     }
 } // namespace Diff
