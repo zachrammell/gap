@@ -17,13 +17,13 @@ if "%~1"==""                         echo [default mode, assuming `gap` build] &
 if "%~1"=="release" if "%~2"==""     echo [default mode, assuming `gap` build] && set gap=1
 
 :: --- Unpack Command Line Build Arguments ------------------------------------
-set opengl_renderer=1
+set d3d11=1
 set auto_compile_flags=
 if "%asan%"=="1"             set auto_compile_flags=%auto_compile_flags% -fsanitize=address &&                              echo [asan enabled]
 if "%profiled%"=="1"         set auto_compile_flags=%auto_compile_flags% /DBUILD_PROFILED /I..\..\tracy\public &&           echo [profiling enabled]
 if "%track_arena%"=="1"      set auto_compile_flags=%auto_compile_flags% /DBUILD_TRACK_ARENA &&                             echo [arena tracking enabled]
-if "%d3d11%"=="1"            set auto_compile_flags=%auto_compile_flags% /DBUILD_D3D11_RENDERER && set opengl_renderer=0 && echo [DX11 renderer enabled]
-if "%opengl_renderer%"=="1"  set auto_compile_flags=%auto_compile_flags% /DBUILD_OPENGL_RENDERER &&                         echo [OpenGL renderer enabled]
+if "%opengl%"=="1"           set auto_compile_flags=%auto_compile_flags% /DBUILD_OPENGL_RENDERER && set d3d11=0          && echo [OpenGL renderer enabled]
+if "%d3d11%"=="1"            set auto_compile_flags=%auto_compile_flags% /DBUILD_D3D11_RENDERER &&                          echo [DX11 renderer enabled]
 set build_assets=0
 if "%gap%"=="1" if not "%no_deps%"=="1" if not "%only_compile%"=="1" set build_assets=1
 
@@ -106,10 +106,8 @@ pushd build
 popd
 
 :: --- Get Current Git Commit Id ----------------------------------------------
-:: for /f %%i in ('call git describe --always --dirty')   do set compile=%compile% -DBUILD_GIT_HASH=\"%%i\"
-:: for /f %%i in ('call git rev-parse HEAD')              do set compile=%compile% -DBUILD_GIT_HASH_FULL=\"%%i\"
-
-set compile=%compile% -DBUILD_GIT_HASH=\"123\" -DBUILD_GIT_HASH_FULL=\"123\"
+for /f %%i in ('call git describe --always --dirty')   do set compile=%compile% -DBUILD_GIT_HASH=\"%%i\"
+for /f %%i in ('call git rev-parse HEAD')              do set compile=%compile% -DBUILD_GIT_HASH_FULL=\"%%i\"
 
 :: --- Build & Run Assets -----------------------------------------------------
 pushd build
