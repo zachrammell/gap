@@ -71,6 +71,7 @@ namespace Diff
         enum class PanelButtons
         {
             SwapDiffs,
+            ToggleInnerDiffFormat,
             LowerCtxWindow,
             CtxWindow,
             ExpandCtxWindow,
@@ -86,6 +87,7 @@ namespace Diff
         UI::Widgets::ID id;
         PartitionPanel A;
         PartitionPanel B;
+        bool word_based_diff;
     };
 
     // Creation.
@@ -102,6 +104,7 @@ namespace Diff
         // Connect A and B.
         panel->A.sib_next = &panel->B;
         panel->B.sib_prev = &panel->A;
+        panel->word_based_diff = Config::diff_state().word_based_diff;
         return panel;
     }
 
@@ -332,6 +335,279 @@ namespace Diff
         }
     }
 
+    constexpr bool is_lower(char c)
+    {
+        return c >= 'a' and c <= 'z';
+    }
+
+    constexpr bool is_upper(char c)
+    {
+        return c >= 'A' and c <= 'Z';
+    }
+
+    constexpr bool is_alpha(char c)
+    {
+        return is_lower(c) or is_upper(c);
+    }
+
+    constexpr bool is_digit(char c)
+    {
+        return c >= '0' and c <= '9';
+    }
+
+    struct DiffWordNode
+    {
+        DiffWordNode* next;
+        DiffWord word;
+    };
+
+    struct DiffWordList
+    {
+        DiffWordNode* first;
+        DiffWordNode* last;
+        uint64_t count;
+    };
+
+    enum class WordContext
+    {
+        None,
+        Alpha,
+        Number
+    };
+
+    WordContext char_context(char c)
+    {
+        if (is_alpha(c))
+            return WordContext::Alpha;
+        if (is_digit(c))
+            return WordContext::Number;
+        return WordContext::None;
+    }
+
+    void push_word_node(Arena::Arena* arena, DiffWordList* lst, DiffWord word)
+    {
+        DiffWordNode* node = Arena::push_array<DiffWordNode>(arena, 1);
+        node->word = word;
+        SLLQueuePush(lst->first, lst->last, node);
+        ++lst->count;
+    }
+
+    void populate_merged_text_list_word_based(Arena::Arena* arena, const BuildMergedListInput& in)
+    {
+        if (in.A.count == 0)
+            return;
+        if (in.B.count == 0)
+            return;
+        // These are used to map offsets back to the visual lines in the diff.
+        auto scratch = Arena::scratch_begin({ &arena, 1 });
+        OffsetVisualLineMap off_map_a = {};
+        OffsetVisualLineMap off_map_b = {};
+        DiffWordList word_lst_A = {};
+        DiffWordList word_lst_B = {};
+        // Allocate offset maps.
+        off_map_a.size = in.A.count;
+        off_map_b.size = in.B.count;
+        off_map_a.array = Arena::push_array_no_zero<OffsetVisualLine>(arena, off_map_a.size);
+        off_map_b.array = Arena::push_array_no_zero<OffsetVisualLine>(arena, off_map_b.size);
+        uint64_t idx_map = 0;
+        for EachNode(n, in.A.first)
+        {
+            off_map_a.array[idx_map].first = n->line.first;
+            off_map_a.array[idx_map++].v_line = n->line.v_line;
+            if (n->line.first == n->line.last)
+                continue;
+            char c = in.file_A->content.str[rep(n->line.first)];
+            DiffWord word = {};
+            word.first = n->line.first;
+            // Seed.
+            WordContext ctx = char_context(c);
+            for (Editor::CharOffset off = extend(n->line.first); off < n->line.last; off = extend(off))
+            {
+                WordContext next_ctx = char_context(in.file_A->content.str[rep(off)]);
+                bool commit = false;
+                if (ctx != next_ctx)
+                {
+                    commit = true;
+                }
+
+                // Just make words out of everything that isn't a word so we can diff them all.
+                commit |= next_ctx == WordContext::None;
+                if (commit)
+                {
+                    word.last = off;
+                    push_word_node(scratch.arena, &word_lst_A, word);
+                    word.first = off;
+                }
+                ctx = next_ctx;
+            }
+            // Word end.
+            word.last = n->line.last;
+            push_word_node(scratch.arena, &word_lst_A, word);
+        }
+        idx_map = 0;
+        for EachNode(n, in.B.first)
+        {
+            off_map_b.array[idx_map].first = n->line.first;
+            off_map_b.array[idx_map++].v_line = n->line.v_line;
+            if (n->line.first == n->line.last)
+                continue;
+            char c = in.file_B->content.str[rep(n->line.first)];
+            DiffWord word = {};
+            word.first = n->line.first;
+            // Seed.
+            WordContext ctx = char_context(c);
+            for (Editor::CharOffset off = extend(n->line.first); off < n->line.last; off = extend(off))
+            {
+                WordContext next_ctx = char_context(in.file_B->content.str[rep(off)]);
+                bool commit = false;
+                if (ctx != next_ctx)
+                {
+                    commit = true;
+                }
+
+                // Just make words out of everything that isn't a word so we can diff them all.
+                commit |= next_ctx == WordContext::None;
+                if (commit)
+                {
+                    word.last = off;
+                    push_word_node(scratch.arena, &word_lst_B, word);
+                    word.first = off;
+                }
+                ctx = next_ctx;
+            }
+            // Word end.
+            word.last = n->line.last;
+            push_word_node(scratch.arena, &word_lst_B, word);
+        }
+        // Copy the word lists into arrays.
+        DiffWordInput words_A = {};
+        DiffWordInput words_B = {};
+        words_A.file = in.file_A;
+        words_B.file = in.file_B;
+
+        words_A.words.size = word_lst_A.count;
+        words_A.words.words = Arena::push_array_no_zero<DiffWord>(arena, words_A.words.size);
+        idx_map = 0;
+        for EachNode(n, word_lst_A.first)
+        {
+            words_A.words.words[idx_map++] = n->word;
+        }
+        words_B.words.size = word_lst_B.count;
+        words_B.words.words = Arena::push_array_no_zero<DiffWord>(arena, words_B.words.size);
+        idx_map = 0;
+        for EachNode(n, word_lst_B.first)
+        {
+            words_B.words.words[idx_map++] = n->word;
+        }
+        Arena::scratch_end(scratch);
+        EditList edits = diff_file_words(arena, words_A, words_B);
+        // Now our strategy is to iterate this list and create a series of fine-grained edits in each block.
+        MergedText current = { .type = EditType::Invalid };
+        for EachNode(e, edits.first)
+        {
+            switch (e->edit.type)
+            {
+            case EditType::Del:
+                // Create if invalid.
+                if (current.type == EditType::Invalid)
+                {
+                    current.type = e->edit.type;
+                    current.first = words_A.words.words[e->edit.idx_a].first;
+                    current.last = words_A.words.words[e->edit.idx_a].last;
+                    current.v_line = v_line_for_offset(&off_map_a, current.first);
+                }
+
+                // Commit the current.
+                if (current.type != e->edit.type)
+                {
+                    // Note: We only merge insertions and deletions so this list will always
+                    // commit to B.
+                    push_merged_text(in.merge_arena, in.merged_B, current);
+                    current.type = e->edit.type;
+                    current.first = words_A.words.words[e->edit.idx_a].first;
+                    current.last = words_A.words.words[e->edit.idx_a].last;
+                    current.v_line = v_line_for_offset(&off_map_a, current.first);
+                }
+
+                // Test if we can connect these chunks.
+                if (current.last == words_A.words.words[e->edit.idx_a].first)
+                {
+                    current.last = words_A.words.words[e->edit.idx_a].last;
+                    // v_line should be preserved since words are already broken up by line.  We can't
+                    // have a scenario where a word crosses a newline character.
+                }
+                // Otherwise, we are starting a new chunk.  Commit the current one.
+                else if (current.last != words_A.words.words[e->edit.idx_a].last)
+                {
+                    // Commit it.
+                    push_merged_text(in.merge_arena, in.merged_A, current);
+                    current.type = e->edit.type;
+                    current.first = words_A.words.words[e->edit.idx_a].first;
+                    current.last = words_A.words.words[e->edit.idx_a].last;
+                    current.v_line = v_line_for_offset(&off_map_a, current.first);
+                }
+                break;
+            case EditType::Ins:
+                // Create if invalid.
+                if (current.type == EditType::Invalid)
+                {
+                    current.type = e->edit.type;
+                    current.first = words_B.words.words[e->edit.idx_b].first;
+                    current.last = words_B.words.words[e->edit.idx_b].last;
+                    current.v_line = v_line_for_offset(&off_map_b, current.first);
+                }
+
+                // Commit the current.
+                if (current.type != e->edit.type)
+                {
+                    // Note: We only merge insertions and deletions so this list will always
+                    // commit to A.
+                    push_merged_text(in.merge_arena, in.merged_A, current);
+                    current.type = e->edit.type;
+                    current.first = words_B.words.words[e->edit.idx_b].first;
+                    current.last = words_B.words.words[e->edit.idx_b].last;
+                    current.v_line = v_line_for_offset(&off_map_b, current.first);
+                }
+
+                // Test if we can connect these chunks.
+                if (current.last == words_B.words.words[e->edit.idx_b].first)
+                {
+                    current.last = words_B.words.words[e->edit.idx_b].last;
+                    // v_line should be preserved since words are already broken up by line.  We can't
+                    // have a scenario where a word crosses a newline character.
+                }
+                // Otherwise, we are starting a new chunk.  Commit the current one.
+                else if (current.last != words_B.words.words[e->edit.idx_b].last)
+                {
+                    // Commit it.
+                    push_merged_text(in.merge_arena, in.merged_B, current);
+                    current.type = e->edit.type;
+                    current.first = words_B.words.words[e->edit.idx_b].first;
+                    current.last = words_B.words.words[e->edit.idx_b].last;
+                    current.v_line = v_line_for_offset(&off_map_b, current.first);
+                }
+                break;
+            case EditType::Eq:
+                break;
+            case EditType::Invalid:
+                break;
+            }
+        }
+        // Commit the final.
+        if (current.type != EditType::Invalid)
+        {
+            if (current.type == EditType::Del)
+            {
+                push_merged_text(in.merge_arena, in.merged_A, current);
+            }
+            else
+            {
+                assert(current.type == EditType::Ins);
+                push_merged_text(in.merge_arena, in.merged_B, current);
+            }
+        }
+    }
+
     void apply_diff(DiffPanel* panel, Feed::MessageFeed* feed)
     {
         Timers::Stopwatch sw;
@@ -339,6 +615,14 @@ namespace Diff
         auto scratch = Arena::scratch_begin(Arena::no_conflicts);
         // This is so that we can avoid possible chaining of scratch above.
         auto scratch2 = Arena::scratch_begin({ &scratch.arena, 1 });
+        // Choose inner diff format.
+        using InnerDiffFmtFn = void (*)(Arena::Arena*, const BuildMergedListInput&);
+        InnerDiffFmtFn fns[] =
+        {
+            populate_merged_text_list,
+            populate_merged_text_list_word_based
+        };
+        InnerDiffFmtFn inner_diff_fn = fns[panel->word_based_diff];
         TextFile* a = text_file(panel->A.view);
         TextFile* b = text_file(panel->B.view);
         EditList edits = diff_file_lines(scratch.arena, *a, *b);
@@ -473,7 +757,7 @@ namespace Diff
                     push_merge_line(scratch.arena, &lst_B, line_b);
                     assert(lst_A.count == lst_B.count);
                     // Try to pull candidates and create a merge block.
-                    populate_merged_text_list(scratch2.arena, merged_lst_input);
+                    inner_diff_fn(scratch2.arena, merged_lst_input);
                     merged_lst_input.A = {};
                     merged_lst_input.B = {};
                     // Clear the temporary arena as well.
@@ -485,7 +769,7 @@ namespace Diff
             }
         }
         // Perform one final populate just in case the files were completely different.
-        populate_merged_text_list(scratch2.arena, merged_lst_input);
+        inner_diff_fn(scratch2.arena, merged_lst_input);
 
         populate_line_diff(panel->A.view, lst_A);
         populate_line_diff(panel->B.view, lst_B);
@@ -502,10 +786,19 @@ namespace Diff
         apply_context_window(panel->B.view);
     }
 
-    void sync_config(DiffPanel* panel)
+    void sync_config(DiffPanel* panel, Feed::MessageFeed* feed)
     {
-        apply_context_window(panel->A.view);
-        apply_context_window(panel->B.view);
+        // If this was changed, we need to recompute everything.
+        if (panel->word_based_diff != Config::diff_state().word_based_diff)
+        {
+            panel->word_based_diff = Config::diff_state().word_based_diff;
+            apply_diff(panel, feed);
+        }
+        else
+        {
+            apply_context_window(panel->A.view);
+            apply_context_window(panel->B.view);
+        }
     }
 
     // Building.
@@ -543,6 +836,7 @@ namespace Diff
                 UI::Widgets::ID btn_ids[] = 
                 {
                     UI::Widgets::make_id_seed(panel->id, "swap-diffs"),
+                    UI::Widgets::make_id_seed(panel->id, "toggle-inr-diff-fmt"),
                     UI::Widgets::make_id_seed(panel->id, "ctx-wnd-dwn"),
                     UI::Widgets::make_id_seed(panel->id, "ctx-wnd-val"),
                     UI::Widgets::make_id_seed(panel->id, "ctx-wnd-up"),
@@ -551,6 +845,7 @@ namespace Diff
                 constexpr String8View btn_tips[] =
                 {
                     str8_literal("Swap files"),
+                    str8_literal("Change inner diff format"),
                     str8_literal("Lower context window"),
                     str8_literal("Context window"),
                     str8_literal("Expand context window"),
@@ -561,6 +856,12 @@ namespace Diff
                     {
                         .id = btn_ids[rep(PanelButtons::SwapDiffs)],
                         .icon = Glyph::SpecialGlyph::Replace,
+                        .padding = { PartitionPanel::padding },
+                        .thickness = PartitionPanel::padding,
+                    },
+                    {
+                        .id = btn_ids[rep(PanelButtons::ToggleInnerDiffFormat)],
+                        .icon = Glyph::SpecialGlyph::WholeWord,
                         .padding = { PartitionPanel::padding },
                         .thickness = PartitionPanel::padding,
                     },
@@ -634,17 +935,38 @@ namespace Diff
                     btns[i].pos = btn_pos;
                     btns[i].forced_size = ideal_btn;
                     bool clicked = false;
-                    if (i == rep(PanelButtons::CtxWindow))
+                    switch (PanelButtons(i))
                     {
-                        ctx_wnd_btn_in.pos = btn_pos;
-                        auto btn_resp = UI::Widgets::basic_button(panel->frame_lst, state, &font_ctx, ctx_wnd_btn_in, UI::Widgets::BuildButtonFlags::None);
-                        btn_pos.x += btn_resp.btn_size.x;
-                    }
-                    else
-                    {
-                        auto btn_resp = UI::Widgets::basic_iconic_button(panel->frame_lst, state, &font_ctx, btns[i], UI::Widgets::BuildButtonFlags::None);
-                        clicked = btn_resp.clicked;
-                        btn_pos.x += btn_resp.btn_size.x;
+                    case PanelButtons::CtxWindow:
+                        {
+                            ctx_wnd_btn_in.pos = btn_pos;
+                            auto btn_resp = UI::Widgets::basic_button(panel->frame_lst, state, &font_ctx, ctx_wnd_btn_in, UI::Widgets::BuildButtonFlags::None);
+                            btn_pos.x += btn_resp.btn_size.x;
+                        }
+                        break;
+                    case PanelButtons::ToggleInnerDiffFormat:
+                        {
+                            UI::Widgets::BuildButtonFlags flgs = UI::Widgets::BuildButtonFlags::None;
+                            CmdBuffer::ColorPalette palette = *current_palette(*panel->frame_lst);
+                            if (panel->word_based_diff)
+                            {
+                                flgs |= UI::Widgets::BuildButtonFlags::Fill;
+                                palette.fill = colors.active_button;
+                            }
+                            CmdBuffer::push_color_palette(panel->frame_lst, palette);
+                            auto btn_resp = UI::Widgets::basic_iconic_button(panel->frame_lst, state, &font_ctx, btns[i], flgs);
+                            CmdBuffer::pop_color_palette(panel->frame_lst);
+                            clicked = btn_resp.clicked;
+                            btn_pos.x += btn_resp.btn_size.x;
+                        }
+                        break;
+                    default:
+                        {
+                            auto btn_resp = UI::Widgets::basic_iconic_button(panel->frame_lst, state, &font_ctx, btns[i], UI::Widgets::BuildButtonFlags::None);
+                            clicked = btn_resp.clicked;
+                            btn_pos.x += btn_resp.btn_size.x;
+                        }
+                        break;
                     }
                     // Place tooltips.
                     if (not state->tooltip.enabled and UI::hot_widget_set(*state, btn_ids[i]))
@@ -654,6 +976,17 @@ namespace Diff
                             .padding = PartitionPanel::padding,
                             .screen_pos = state->mouse.ui_mouse
                         };
+                        if (btn_ids[i] == btn_ids[rep(PanelButtons::ToggleInnerDiffFormat)])
+                        {
+                            if (panel->word_based_diff)
+                            {
+                                tip_in.text = "Enable character-based inner-diff";
+                            }
+                            else
+                            {
+                                tip_in.text = "Enable word-based inner-diff";
+                            }
+                        }
                         UI::Widgets::basic_text_tooltip(state, core_lst, &font_ctx, tip_in);
                     }
                     // Process click.
@@ -672,13 +1005,21 @@ namespace Diff
                                 apply_diff(panel, feed);
                             }
                             break;
+                        case PanelButtons::ToggleInnerDiffFormat:
+                            {
+                                auto cfg = Config::diff_state();
+                                cfg.word_based_diff = not cfg.word_based_diff;
+                                Config::update(cfg);
+                                resp.updated_cfg = true;
+                            }
+                            break;
                         case PanelButtons::LowerCtxWindow:
                             {
                                 auto cfg = Config::diff_state();
                                 // We only need, at most, a -1 to provide the infinite context behavior.
                                 cfg.context_window = std::max(-1, cfg.context_window - 1);
                                 Config::update(cfg);
-                                resp.updated_ctx_window = true;
+                                resp.updated_cfg = true;
                             }
                             break;
                         case PanelButtons::ExpandCtxWindow:
@@ -687,7 +1028,7 @@ namespace Diff
                                 // We only need, at most, a -1 to provide the infinite context behavior.
                                 cfg.context_window += 1;
                                 Config::update(cfg);
-                                resp.updated_ctx_window = true;
+                                resp.updated_cfg = true;
                             }
                             break;
                         }

@@ -8,7 +8,7 @@ namespace Diff
 {
     struct DiffPanelResponse
     {
-        bool updated_ctx_window;
+        bool updated_cfg;
     };
 
     struct DiffPanel;
@@ -23,7 +23,7 @@ namespace Diff
     void file_A(DiffPanel* panel, const TextFile& file);
     void file_B(DiffPanel* panel, const TextFile& file);
     void apply_diff(DiffPanel* panel, Feed::MessageFeed* feed);
-    void sync_config(DiffPanel* panel);
+    void sync_config(DiffPanel* panel, Feed::MessageFeed* feed);
 
     // Building.
     DiffPanelResponse build_diff_panel(DiffPanel* panel,

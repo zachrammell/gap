@@ -34,6 +34,11 @@ namespace Diff
                     const DiffBlockInput* block_a;
                     const DiffBlockInput* block_b;
                 };
+                struct
+                {
+                    const DiffWordInput* words_a;
+                    const DiffWordInput* words_b;
+                };
             };
             bool (*cmp)(const DiffInput*, OffT a_idx, OffT b_idx);
         };
@@ -116,6 +121,17 @@ namespace Diff
             assert(rep(off_a) < file_a->content.size);
             assert(rep(off_b) < file_b->content.size);
             return file_a->content.str[rep(off_a)] == file_b->content.str[rep(off_b)];
+        }
+
+        bool same_word(const DiffInput* input, OffT index_a, OffT index_b)
+        {
+            const TextFile* file_a = input->words_a->file;
+            const TextFile* file_b = input->words_b->file;
+            DiffWord word_off_a = input->words_a->words.words[index_a];
+            DiffWord word_off_b = input->words_b->words.words[index_b];
+            String8 word_a = str8_substr(file_a->content, { .off = rep(word_off_a.first), .len = rep(distance(word_off_a.first, word_off_a.last)) });
+            String8 word_b = str8_substr(file_b->content, { .off = rep(word_off_b.first), .len = rep(distance(word_off_b.first, word_off_b.last)) });
+            return str8_match_exact(word_a, word_b);
         }
 
         void push_edit(Arena::Arena* arena, EditList* lst, Edit edit)
@@ -618,6 +634,14 @@ namespace Diff
         EditList result = {};
         DiffInput input = { .block_a = &a, .block_b = &b, .cmp = same_text };
         unified_diff_box(arena, &input, make_box(0, 0, OffT(a.block.size), OffT(b.block.size)), &result);
+        return result;
+    }
+
+    EditList diff_file_words(Arena::Arena* arena, const DiffWordInput& a, const DiffWordInput& b)
+    {
+        EditList result = {};
+        DiffInput input = { .words_a = &a, .words_b = &b, .cmp = same_word };
+        unified_diff_box(arena, &input, make_box(0, 0, OffT(a.words.size), OffT(b.words.size)), &result);
         return result;
     }
 } // namespace Diff

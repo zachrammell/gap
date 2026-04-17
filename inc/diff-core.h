@@ -73,6 +73,24 @@ namespace Diff
         const TextFile* file;
     };
 
+    struct DiffWord
+    {
+        Editor::CharOffset first;
+        Editor::CharOffset last;
+    };
+
+    struct DiffWords
+    {
+        DiffWord* words;
+        uint64_t size;
+    };
+
+    struct DiffWordInput
+    {
+        DiffWords words;
+        const TextFile* file;
+    };
+
     // Text files.
     TextFile text_file_read(Arena::Arena* arena, String8 path);
     String8 text_file_line_text(const TextFile& file, Editor::CursorLine line);
@@ -84,4 +102,5 @@ namespace Diff
     // Note: This is the linear space variant of the Myers diff algorithm.
     EditList diff_file_lines(Arena::Arena* arena, const TextFile& a, const TextFile& b);
     EditList diff_file_block(Arena::Arena* arena, const DiffBlockInput& a, const DiffBlockInput& b);
+    EditList diff_file_words(Arena::Arena* arena, const DiffWordInput& a, const DiffWordInput& b);
 } // namespace Diff
