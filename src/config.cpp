@@ -281,8 +281,8 @@ namespace Config
         DiffState diff_state_instance =
         {
             .diff_font_size = 14,
-            .word_based_diff = true,
             .show_line_numbers = true,
+            .word_based_diff = true,
             .context_window = 3, // This is the default for Linux diff... so...
         };
 
