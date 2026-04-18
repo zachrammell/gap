@@ -282,6 +282,8 @@ namespace Diff
 
     void apply_context_window(DiffTextView* widget)
     {
+        // Note: This is not the best way to do this.  Perhaps there's an alternative data structure
+        // to be used here vs rebuilding the view array.
         Arena::clear(widget->ctx_diff_arena);
         int context = Config::diff_state().context_window;
         // Negative context window implies an infinitely wide window (no filtering).
@@ -635,9 +637,9 @@ namespace Diff
                 CmdBuffer::push_clip(lst, content_clip);
             }
 
-            CmdBuffer::start_shapes(lst, Render::VertShader::OneOneTransform);
             MergedTextBlocksView merged_blocks_view = merged_text_blocks_for_view(&widget->diff_blocks, first, last);
             // Iterate the more fine-diff highlights.
+            CmdBuffer::start_shapes(lst, Render::VertShader::OneOneTransform);
             for (; merged_blocks_view.first != merged_blocks_view.last; ++merged_blocks_view.first)
             {
                 MergedText* merged = merged_blocks_view.first;
