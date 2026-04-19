@@ -893,7 +893,31 @@ namespace OS
             }
             // Now we can start to add our dropped files.
             DropFileList drop_list = {};
-            push_event(arena, lst, EventSort::FileDrop, wnd);
+            Event* event = push_event(arena, lst, EventSort::FileDrop, wnd);
+            {
+                // Get the pointer location for this drop.
+                // Note: This is a bit of a hack.  What we _should_ do is listen to the accompanying
+                // XdndPosition event just before this and use that position.
+                LinuxBackendData* data = linux_data();
+                Window root_rtn;
+                Window child_rtn;
+                Vec2i root_pt;
+                Vec2i wnd_pt;
+                unsigned int mask;
+                if (XQueryPointer(data->display,
+                                    data->wind,
+                                    &root_rtn,
+                                    &child_rtn,
+                                    &root_pt.x,
+                                    &root_pt.y,
+                                    &wnd_pt.x,
+                                    &wnd_pt.y,
+                                    &mask) != 0)
+                {
+                    event->pos.x = static_cast<float>(wnd_pt.x);
+                    event->pos.y = static_cast<float>(wnd_pt.y);
+                }
+            }
             for EachNode(n, split_result.first)
             {
                 // Remove the 'file://' prefix.
