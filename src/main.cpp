@@ -986,6 +986,7 @@ uint32_t flatten_os_events(UI::UIState* state, OS::Events* events, const ScreenD
             break;
         case OS::EventSort::FileDrop:
             state->dropped_files = events->drop_files;
+            state->mouse.ui_mouse = ui_mouse_pos(*e, screen);
             Render::request_frames();
             break;
         // Special events that are populated at a higher level.
@@ -1059,20 +1060,22 @@ void process_global_events(RenderCoreData* data)
     if (state->dropped_files.count != 0)
     {
         char fmt_buf[512];
-        for EachNode(n, state->dropped_files.first)
+        if (state->dropped_files.count > 1)
         {
-            String8 file = n->string;
-            if (OS::regular_file_exists(file))
-            {
-                // TODO: Populate diff.
-                String8 msg = fmt_string(fmt_buf, "Dropped: %S.", n->string);
-                data->feed->queue_info(msg);
-            }
-            else
-            {
-                String8 msg = fmt_string(fmt_buf, "Cannot drop: %S.", n->string);
-                data->feed->queue_error(msg);
-            }
+            data->feed->queue_warning("Only first file in drop list will be applied.");
+        }
+
+        String8 first_file = state->dropped_files.first->string;
+        if (OS::regular_file_exists(first_file))
+        {
+            String8 msg = fmt_string(fmt_buf, "Dropped: %S.", first_file);
+            data->feed->queue_info(msg);
+            Diff::try_file_drop(data->diff_panel, first_file, state, data->feed);
+        }
+        else
+        {
+            String8 msg = fmt_string(fmt_buf, "Cannot drop: %S.", first_file);
+            data->feed->queue_error(msg);
         }
         state->dropped_files = { };
     }

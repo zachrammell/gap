@@ -801,6 +801,35 @@ namespace Diff
         }
     }
 
+    void try_file_drop(DiffPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed)
+    {
+        bool diff_applied = false;
+        CmdBuffer::ClipRect clip = CmdBuffer::ClipRect::basic(CmdBuffer::screen(*panel->frame_lst));
+        // Test to see which panel the mouse is over, populate the file and reapply diffs.
+        for (PartitionPanel* child = &panel->A;
+            not null_panel(child);
+            child = child->sib_next)
+        {
+            CmdBuffer::ClipRect child_clip = clip_from_parent(clip, &panel->A, child);
+            if (mouse_in_clip(state->mouse.ui_mouse, child_clip))
+            {
+                auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+                TextFile new_file = text_file_read(scratch.arena, path);
+                // Apply the text file.
+                populate_text(child->view, new_file);
+                apply_diff(panel, feed);
+                Arena::scratch_end(scratch);
+                diff_applied = true;
+                break;
+            }
+        }
+
+        if (not diff_applied)
+        {
+            feed->queue_warning("Please drop file over specific diff side to apply diffs.");
+        }
+    }
+
     // Building.
     DiffPanelResponse build_diff_panel(DiffPanel* panel,
                                         CmdBuffer::CmdList* cmd_lst,
@@ -811,7 +840,7 @@ namespace Diff
         PROF_SCOPE();
 
         DiffPanelResponse resp = {};
-        auto clip = CmdBuffer::current_clip(*core_lst);
+        CmdBuffer::ClipRect clip = CmdBuffer::current_clip(*core_lst);
         const auto& colors = Config::widget_colors();
 
         // Start the frame for the enclosing editor frame.
