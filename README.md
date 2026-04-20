@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="res/gap.png" style="width: 60%" /><br/><br/>gap - GUI Text Diff.<br/><br/>
+    <img src="res/gap.png" /><br/><br/>gap - GUI Text Diff.<br/><br/>
 </p>
 
 # gap
@@ -16,7 +16,8 @@ The secondary goal of **gap** is to serve as a proof-of-concept for implementing
 * Expand/collapse context window at the push of a button (anything below 0 indicates 'infinite' context, implying there is no window).
 * Full configuration explorer just like in **fred** from which you can change settings such as viewing line numbers, changing colors, or disabling animations.
 * Help panel which provides hotkey rebinding.
-* Multiple renderer options on Windows (DX11 and OpenGL).
+* Multiple renderer options on Windows (DX11 and OpenGL with DX11 being default).
+* Supports subpixel font rendering (on by default).
 * Supports both Windows and Linux (no OSX).
 
 ## Usage
@@ -32,12 +33,13 @@ $ git config difftool.gap.path "D:/git_projects/gap/build/gap.exe"
 $ git config difftool.gap.cmd "D:/git_projects/gap/build/gap.exe """$LOCAL""" """$REMOTE""""
 $ git config diff.tool gap
 ```
+Which you can then use `git difftool` instead of `git diff` to view diffs locally.
 
 On Linux you would simply escape the quotes differently and alter paths.
 
 ## Screenshot
 
-![screenshot](res/gap.png)
+![screenshot](res/gap-screen.png)
 
 ## Building
 
