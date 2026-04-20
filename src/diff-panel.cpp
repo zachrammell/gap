@@ -768,6 +768,29 @@ namespace Diff
                 break;
             }
         }
+        // If there are any remaining entries on the merge list, we need to add them now as gap entries.
+        MergedLineNode* node = lst_merge_B.first;
+        while (node != nullptr)
+        {
+            // Add gap from B.
+            MergedLine line_b = {
+                .first = CharOffset::Sentinel,
+                .last = CharOffset::Sentinel,
+                .v_line = lst_B.count,
+                .line = CursorLine::Beginning,
+                .type = EditType::Invalid,
+            };
+            // Insert B.
+            node->line = line_b;
+            SLLQueuePop(lst_merge_B.first, lst_merge_B.last);
+            node->next = nullptr;
+            --lst_merge_B.count;
+            SLLQueuePush(lst_B.first, lst_B.last, node);
+            ++lst_B.count;
+
+            // Move node forward.
+            node = lst_merge_B.first;
+        }
         // Perform one final populate just in case the files were completely different.
         inner_diff_fn(scratch2.arena, merged_lst_input);
 
