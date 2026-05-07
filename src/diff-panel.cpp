@@ -127,12 +127,12 @@ namespace Diff
     // Interaction.
     void file_A(DiffPanel* panel, const TextFile& file)
     {
-        populate_text(panel->A.view, file);
+        diff_text_view_populate_text(panel->A.view, file);
     }
 
     void file_B(DiffPanel* panel, const TextFile& file)
     {
-        populate_text(panel->B.view, file);
+        diff_text_view_populate_text(panel->B.view, file);
     }
 
     struct OffsetVisualLine
@@ -266,7 +266,7 @@ namespace Diff
                 {
                     // Note: We only merge insertions and deletions so this list will always
                     // commit to B.
-                    push_merged_text(in.merge_arena, in.merged_B, current);
+                    diff_text_view_push_merged_text(in.merge_arena, in.merged_B, current);
                     current.type = e->edit.type;
                     current.first = current.last = block_a.block.underlying_off[e->edit.idx_a];
                     current.v_line = v_line_for_offset(&off_map_a, current.first);
@@ -276,7 +276,7 @@ namespace Diff
                 if (current.last != block_a.block.underlying_off[e->edit.idx_a])
                 {
                     // Commit it.
-                    push_merged_text(in.merge_arena, in.merged_A, current);
+                    diff_text_view_push_merged_text(in.merge_arena, in.merged_A, current);
                     current.type = e->edit.type;
                     current.first = current.last = block_a.block.underlying_off[e->edit.idx_a];
                     current.v_line = v_line_for_offset(&off_map_a, current.first);
@@ -297,7 +297,7 @@ namespace Diff
                 {
                     // Note: We only merge insertions and deletions so this list will always
                     // commit to A.
-                    push_merged_text(in.merge_arena, in.merged_A, current);
+                    diff_text_view_push_merged_text(in.merge_arena, in.merged_A, current);
                     current.type = e->edit.type;
                     current.first = current.last = block_b.block.underlying_off[e->edit.idx_b];
                     current.v_line = v_line_for_offset(&off_map_b, current.first);
@@ -307,7 +307,7 @@ namespace Diff
                 if (current.last != block_b.block.underlying_off[e->edit.idx_b])
                 {
                     // Commit it.
-                    push_merged_text(in.merge_arena, in.merged_B, current);
+                    diff_text_view_push_merged_text(in.merge_arena, in.merged_B, current);
                     current.type = e->edit.type;
                     current.first = current.last = block_b.block.underlying_off[e->edit.idx_b];
                     current.v_line = v_line_for_offset(&off_map_b, current.first);
@@ -325,12 +325,12 @@ namespace Diff
         {
             if (current.type == EditType::Del)
             {
-                push_merged_text(in.merge_arena, in.merged_A, current);
+                diff_text_view_push_merged_text(in.merge_arena, in.merged_A, current);
             }
             else
             {
                 assert(current.type == EditType::Ins);
-                push_merged_text(in.merge_arena, in.merged_B, current);
+                diff_text_view_push_merged_text(in.merge_arena, in.merged_B, current);
             }
         }
     }
@@ -522,7 +522,7 @@ namespace Diff
                 {
                     // Note: We only merge insertions and deletions so this list will always
                     // commit to B.
-                    push_merged_text(in.merge_arena, in.merged_B, current);
+                    diff_text_view_push_merged_text(in.merge_arena, in.merged_B, current);
                     current.type = e->edit.type;
                     current.first = words_A.words.words[e->edit.idx_a].first;
                     current.last = words_A.words.words[e->edit.idx_a].last;
@@ -540,7 +540,7 @@ namespace Diff
                 else if (current.last != words_A.words.words[e->edit.idx_a].last)
                 {
                     // Commit it.
-                    push_merged_text(in.merge_arena, in.merged_A, current);
+                    diff_text_view_push_merged_text(in.merge_arena, in.merged_A, current);
                     current.type = e->edit.type;
                     current.first = words_A.words.words[e->edit.idx_a].first;
                     current.last = words_A.words.words[e->edit.idx_a].last;
@@ -562,7 +562,7 @@ namespace Diff
                 {
                     // Note: We only merge insertions and deletions so this list will always
                     // commit to A.
-                    push_merged_text(in.merge_arena, in.merged_A, current);
+                    diff_text_view_push_merged_text(in.merge_arena, in.merged_A, current);
                     current.type = e->edit.type;
                     current.first = words_B.words.words[e->edit.idx_b].first;
                     current.last = words_B.words.words[e->edit.idx_b].last;
@@ -580,7 +580,7 @@ namespace Diff
                 else if (current.last != words_B.words.words[e->edit.idx_b].last)
                 {
                     // Commit it.
-                    push_merged_text(in.merge_arena, in.merged_B, current);
+                    diff_text_view_push_merged_text(in.merge_arena, in.merged_B, current);
                     current.type = e->edit.type;
                     current.first = words_B.words.words[e->edit.idx_b].first;
                     current.last = words_B.words.words[e->edit.idx_b].last;
@@ -598,12 +598,12 @@ namespace Diff
         {
             if (current.type == EditType::Del)
             {
-                push_merged_text(in.merge_arena, in.merged_A, current);
+                diff_text_view_push_merged_text(in.merge_arena, in.merged_A, current);
             }
             else
             {
                 assert(current.type == EditType::Ins);
-                push_merged_text(in.merge_arena, in.merged_B, current);
+                diff_text_view_push_merged_text(in.merge_arena, in.merged_B, current);
             }
         }
     }
@@ -623,8 +623,8 @@ namespace Diff
             populate_merged_text_list_word_based
         };
         InnerDiffFmtFn inner_diff_fn = fns[panel->word_based_diff];
-        TextFile* a = text_file(panel->A.view);
-        TextFile* b = text_file(panel->B.view);
+        TextFile* a = diff_text_view_text_file(panel->A.view);
+        TextFile* b = diff_text_view_text_file(panel->B.view);
         EditList edits = diff_file_lines(scratch.arena, *a, *b);
         // What we want is a sequence of 'lines' for both A and B which
         // represent the 'merged' files together.  We will merge deletes
@@ -658,7 +658,7 @@ namespace Diff
                         .line = CursorLine(e->edit.idx_a),
                         .type = EditType::Del,
                     };
-                    push_merge_line(scratch.arena, &lst_A, line_a);
+                    diff_text_view_push_merge_line(scratch.arena, &lst_A, line_a);
                     MergedLine line_b = {
                         .first = CharOffset::Sentinel,
                         .last = CharOffset::Sentinel,
@@ -666,9 +666,9 @@ namespace Diff
                         .line = CursorLine::Beginning,
                         .type = EditType::Invalid,
                     };
-                    push_merge_line(scratch.arena, &lst_merge_B, line_b);
+                    diff_text_view_push_merge_line(scratch.arena, &lst_merge_B, line_b);
                     // Now we add the A candidate.
-                    push_merge_line(scratch2.arena, &merged_lst_input.A, line_a);
+                    diff_text_view_push_merge_line(scratch2.arena, &merged_lst_input.A, line_a);
                 }
                 break;
             case EditType::Ins:
@@ -687,7 +687,7 @@ namespace Diff
                     MergedLineNode* node = lst_merge_B.first;
                     if (node == nullptr)
                     {
-                        node = push_merge_line(scratch.arena, &lst_B, line_b);
+                        node = diff_text_view_push_merge_line(scratch.arena, &lst_B, line_b);
                         MergedLine line_a = {
                             .first = CharOffset::Sentinel,
                             .last = CharOffset::Sentinel,
@@ -695,7 +695,7 @@ namespace Diff
                             .line = CursorLine::Beginning,
                             .type = EditType::Invalid,
                         };
-                        push_merge_line(scratch.arena, &lst_A, line_a);
+                        diff_text_view_push_merge_line(scratch.arena, &lst_A, line_a);
                     }
                     // We already have an entry for A.
                     else
@@ -708,7 +708,7 @@ namespace Diff
                         ++lst_B.count;
                     }
                     // Add the B candidate.
-                    push_merge_line(scratch2.arena, &merged_lst_input.B, line_b);
+                    diff_text_view_push_merge_line(scratch2.arena, &merged_lst_input.B, line_b);
                 }
                 break;
             case EditType::Eq:
@@ -753,8 +753,8 @@ namespace Diff
                         .line = CursorLine(e->edit.idx_b),
                         .type = EditType::Eq,
                     };
-                    push_merge_line(scratch.arena, &lst_A, line_a);
-                    push_merge_line(scratch.arena, &lst_B, line_b);
+                    diff_text_view_push_merge_line(scratch.arena, &lst_A, line_a);
+                    diff_text_view_push_merge_line(scratch.arena, &lst_B, line_b);
                     assert(lst_A.count == lst_B.count);
                     // Try to pull candidates and create a merge block.
                     inner_diff_fn(scratch2.arena, merged_lst_input);
@@ -794,10 +794,10 @@ namespace Diff
         // Perform one final populate just in case the files were completely different.
         inner_diff_fn(scratch2.arena, merged_lst_input);
 
-        populate_line_diff(panel->A.view, lst_A);
-        populate_line_diff(panel->B.view, lst_B);
-        populate_text_blocks_diff(panel->A.view, merged_txt_A);
-        populate_text_blocks_diff(panel->B.view, merged_txt_B);
+        diff_text_view_populate_line_diff(panel->A.view, lst_A);
+        diff_text_view_populate_line_diff(panel->B.view, lst_B);
+        diff_text_view_populate_text_blocks_diff(panel->A.view, merged_txt_A);
+        diff_text_view_populate_text_blocks_diff(panel->B.view, merged_txt_B);
         Arena::scratch_end(scratch2);
         sw.stop();
         String8 msg = str8_fmt(scratch.arena, "Diff computed in %ums", sw.to_ms());
@@ -805,8 +805,8 @@ namespace Diff
         Arena::scratch_end(scratch);
 
         // Finally, apply our context window.
-        apply_context_window(panel->A.view);
-        apply_context_window(panel->B.view);
+        diff_text_view_apply_context_window(panel->A.view);
+        diff_text_view_apply_context_window(panel->B.view);
     }
 
     void sync_config(DiffPanel* panel, Feed::MessageFeed* feed)
@@ -819,8 +819,8 @@ namespace Diff
         }
         else
         {
-            apply_context_window(panel->A.view);
-            apply_context_window(panel->B.view);
+            diff_text_view_apply_context_window(panel->A.view);
+            diff_text_view_apply_context_window(panel->B.view);
         }
     }
 
@@ -839,7 +839,7 @@ namespace Diff
                 auto scratch = Arena::scratch_begin(Arena::no_conflicts);
                 TextFile new_file = text_file_read(scratch.arena, path);
                 // Apply the text file.
-                populate_text(child->view, new_file);
+                diff_text_view_populate_text(child->view, new_file);
                 apply_diff(panel, feed);
                 Arena::scratch_end(scratch);
                 diff_applied = true;
@@ -1050,8 +1050,8 @@ namespace Diff
                             {
                                 // Copy the files out to the scratch, then repopulate them in the opposite order.
                                 Arena::Temp tmp = Arena::temp_begin(scratch.arena);
-                                TextFile new_B = text_file_copy_to(tmp.arena, *text_file(panel->A.view));
-                                TextFile new_A = text_file_copy_to(tmp.arena, *text_file(panel->B.view));
+                                TextFile new_B = text_file_copy_to(tmp.arena, *diff_text_view_text_file(panel->A.view));
+                                TextFile new_A = text_file_copy_to(tmp.arena, *diff_text_view_text_file(panel->B.view));
                                 file_A(panel, new_A);
                                 file_B(panel, new_B);
                                 // Free up the scratch arena so we can use it to populate diffs.
@@ -1098,7 +1098,7 @@ namespace Diff
                 child = child->sib_next)
             {
                 CmdBuffer::ClipRect child_clip = clip_from_parent(clip, &panel->A, child);
-                const TextFile* file = text_file(child->view);
+                const TextFile* file = diff_text_view_text_file(child->view);
                 String8 name = file->path;
                 CmdBuffer::start_glyph_run(panel->frame_lst, Render::VertShader::OneOneTransform);
                 Vec2f pos = base_pos;
@@ -1257,7 +1257,7 @@ namespace Diff
                 {
                     share_to = panel->B.view;
                 }
-                share_scroll_pos(share_to, view);
+                diff_text_view_share_scroll_pos(share_to, view);
             }
         }
 

@@ -4,7 +4,7 @@
 
 #include "basic-button.h"
 #include "basic-window.h"
-#include "diff-text.h"
+#include "diff-dir-list.h"
 #include "gap-core.h"
 #include "os.h"
 #include "timers.h"
@@ -14,19 +14,6 @@ namespace Diff
 {
     namespace
     {
-        struct FlatDirEntry
-        {
-            FlatDirEntry* next;
-            OS::DirIterResult item;
-        };
-
-        struct FlatDirEntryList
-        {
-            FlatDirEntry* first;
-            FlatDirEntry* last;
-            uint64_t count;
-        };
-
         struct DiffDirPanelUIData
         {
             float wheel_offset_amount;
@@ -100,12 +87,33 @@ namespace Diff
             return viewport;
         }
 
-        void push_flat_dir_entry(Arena::Arena* arena, FlatDirEntryList* lst, OS::DirIterResult item)
+        void insert_flat_dir_entry_sorted(Arena::Arena* arena, FlatDirEntryList* lst, OS::DirIterResult item)
         {
             FlatDirEntry* e = Arena::push_array<FlatDirEntry>(arena, 1);
             e->item = item;
             e->item.path = str8_copy(arena, e->item.path);
-            SLLQueuePush(lst->first, lst->last, e);
+            // Find the insert point.
+            FlatDirEntry* prev = nullptr;
+            uint64_t node_depth = depth_of_file(e->item.path);
+            uint64_t n_depth = 0;
+            bool inserted = false;
+            for EachNode(n, lst->first)
+            {
+                n_depth = depth_of_file(n->item.path);
+                if (node_depth < n_depth
+                    or (node_depth == n_depth and str8_compare(e->item.path, n->item.path) < 0))
+                {
+                    DLLInsert(lst->first, lst->last, prev, e);
+                    inserted = true;
+                    break;
+                }
+                prev = n;
+            }
+
+            if (not inserted)
+            {
+                DLLPushBack(lst->first, lst->last, e);
+            }
             ++lst->count;
         }
 
@@ -158,7 +166,7 @@ namespace Diff
                         // Otherwise, regular file.
                         else
                         {
-                            push_flat_dir_entry(arena, lst, item);
+                            insert_flat_dir_entry_sorted(arena, lst, item);
                         }
                     } while (true);
                     OS::close_dir_iter(os_itr);

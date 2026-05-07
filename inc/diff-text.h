@@ -77,18 +77,18 @@ namespace Diff
     void release_diff_text_view(DiffTextView* widget);
 
     // Interaction.
-    void populate_text(DiffTextView* widget, const TextFile& text);
-    void populate_line_diff(DiffTextView* widget, MergedLineList lst);
-    void populate_text_blocks_diff(DiffTextView* widget, MergedTextList lst);
-    void share_scroll_pos(DiffTextView* widget, const DiffTextView* share_from);
-    void apply_context_window(DiffTextView* widget);
+    void diff_text_view_populate_text(DiffTextView* widget, const TextFile& text);
+    void diff_text_view_populate_line_diff(DiffTextView* widget, MergedLineList lst);
+    void diff_text_view_populate_text_blocks_diff(DiffTextView* widget, MergedTextList lst);
+    void diff_text_view_share_scroll_pos(DiffTextView* widget, const DiffTextView* share_from);
+    void diff_text_view_apply_context_window(DiffTextView* widget);
 
     // Helpers.
-    MergedTextNode* push_merged_text(Arena::Arena* arena, MergedTextList* lst, MergedText merged);
-    MergedLineNode* push_merge_line(Arena::Arena* arena, MergedLineList* lst, MergedLine line);
+    MergedTextNode* diff_text_view_push_merged_text(Arena::Arena* arena, MergedTextList* lst, MergedText merged);
+    MergedLineNode* diff_text_view_push_merge_line(Arena::Arena* arena, MergedLineList* lst, MergedLine line);
 
     // Queries.
-    TextFile* text_file(DiffTextView* widget);
+    TextFile* diff_text_view_text_file(DiffTextView* widget);
 
     // Building.
     DiffTextViewResponse build_diff_text_view(DiffTextView* widget,

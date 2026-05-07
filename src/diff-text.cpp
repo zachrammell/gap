@@ -211,13 +211,13 @@ namespace Diff
     }
 
     // Queries.
-    TextFile* text_file(DiffTextView* widget)
+    TextFile* diff_text_view_text_file(DiffTextView* widget)
     {
         return &widget->text;
     }
 
     // Interaction.
-    void populate_text(DiffTextView* widget, const TextFile& text)
+    void diff_text_view_populate_text(DiffTextView* widget, const TextFile& text)
     {
         // If we populate text, we should remove the existing diffs as well.
         widget->full_diffs = {};
@@ -241,7 +241,7 @@ namespace Diff
         }
     }
 
-    void populate_line_diff(DiffTextView* widget, MergedLineList lst)
+    void diff_text_view_populate_line_diff(DiffTextView* widget, MergedLineList lst)
     {
         widget->full_diffs = {};
         Arena::clear(widget->diff_arena);
@@ -249,7 +249,7 @@ namespace Diff
         widget->diffs = widget->full_diffs;
     }
 
-    void populate_text_blocks_diff(DiffTextView* widget, MergedTextList lst)
+    void diff_text_view_populate_text_blocks_diff(DiffTextView* widget, MergedTextList lst)
     {
         widget->full_diff_blocks = {};
         Arena::clear(widget->fine_diff_arena);
@@ -272,7 +272,7 @@ namespace Diff
         widget->diff_blocks = widget->full_diff_blocks;
     }
 
-    void share_scroll_pos(DiffTextView* widget, const DiffTextView* share_from)
+    void diff_text_view_share_scroll_pos(DiffTextView* widget, const DiffTextView* share_from)
     {
         UI::Widgets::IndexedScrollOffset off = share_from->scroll->position_no_offset();
         UI::Widgets::IndexedScrollContentSize size_target = widget->scroll->content_size();
@@ -280,7 +280,7 @@ namespace Diff
         widget->scroll->scroll_to(off);
     }
 
-    void apply_context_window(DiffTextView* widget)
+    void diff_text_view_apply_context_window(DiffTextView* widget)
     {
         // Note: This is not the best way to do this.  Perhaps there's an alternative data structure
         // to be used here vs rebuilding the view array.
@@ -332,7 +332,7 @@ namespace Diff
                         MergedLine l = widget->full_diffs.lines[circular_window_fetch(cw, first)];
                         l.v_line = trimmed_lines.count;
                         assert(l.type == EditType::Eq);
-                        push_merge_line(scratch.arena, &trimmed_lines, l);
+                        diff_text_view_push_merge_line(scratch.arena, &trimmed_lines, l);
                     }
                 }
                 else
@@ -346,7 +346,7 @@ namespace Diff
                             MergedLine l = widget->full_diffs.lines[ctx_blk];
                             l.v_line = trimmed_lines.count;
                             assert(l.type == EditType::Eq);
-                            push_merge_line(scratch.arena, &trimmed_lines, l);
+                            diff_text_view_push_merge_line(scratch.arena, &trimmed_lines, l);
                         }
                     }
                     // Add a separator line which tell us this was a skip.
@@ -358,7 +358,7 @@ namespace Diff
                             .line = CursorLine::Beginning,
                             .type = EditType::Skip,
                         };
-                        push_merge_line(scratch.arena, &trimmed_lines, sep);
+                        diff_text_view_push_merge_line(scratch.arena, &trimmed_lines, sep);
                     }
                     uint64_t last = circular_window_end(cw);
                     // We want to start from the slot where the context is above our lines.
@@ -368,7 +368,7 @@ namespace Diff
                         MergedLine l = widget->full_diffs.lines[circular_window_fetch(cw, first)];
                         l.v_line = trimmed_lines.count;
                         assert(l.type == EditType::Eq);
-                        push_merge_line(scratch.arena, &trimmed_lines, l);
+                        diff_text_view_push_merge_line(scratch.arena, &trimmed_lines, l);
                     }
                 }
                 // Clear the circular buffer.
@@ -384,7 +384,7 @@ namespace Diff
             {
                 MergedLine l = *line;
                 l.v_line = trimmed_lines.count;
-                push_merge_line(scratch.arena, &trimmed_lines, l);
+                diff_text_view_push_merge_line(scratch.arena, &trimmed_lines, l);
                 // Now we need to adjust any blocks associated with this line.
                 // There's a nice invariant here.  Since we're only removing lines, the v_line will
                 // only ever get smaller, which means that our binary search for visual lines in the
@@ -406,7 +406,7 @@ namespace Diff
                 MergedLine l = widget->full_diffs.lines[ctx_blk];
                 l.v_line = trimmed_lines.count;
                 assert(l.type == EditType::Eq);
-                push_merge_line(scratch.arena, &trimmed_lines, l);
+                diff_text_view_push_merge_line(scratch.arena, &trimmed_lines, l);
             }
         }
         // Collapse the list into an array.
@@ -415,7 +415,7 @@ namespace Diff
     }
 
     // Helpers.
-    MergedLineNode* push_merge_line(Arena::Arena* arena, MergedLineList* lst, MergedLine line)
+    MergedLineNode* diff_text_view_push_merge_line(Arena::Arena* arena, MergedLineList* lst, MergedLine line)
     {
         MergedLineNode* node = Arena::push_array<MergedLineNode>(arena, 1);
         node->line = line;
@@ -424,7 +424,7 @@ namespace Diff
         return node;
     }
 
-    MergedTextNode* push_merged_text(Arena::Arena* arena, MergedTextList* lst, MergedText merged)
+    MergedTextNode* diff_text_view_push_merged_text(Arena::Arena* arena, MergedTextList* lst, MergedText merged)
     {
         MergedTextNode* node = Arena::push_array<MergedTextNode>(arena, 1);
         node->merged = merged;
