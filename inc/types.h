@@ -158,6 +158,14 @@ namespace CmdBuffer
     enum class IndexOffset : uint32_t { };
     enum class Cardinality : uint32_t { };
 
+    // _0 is drawn first while Count - 1 is drawn last.
+    enum class DrawListLayer
+    {
+        _0,
+        _1,
+        Count
+    };
+
     struct DrawList;
 } // namespace CmdBuffer
 

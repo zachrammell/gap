@@ -18,6 +18,7 @@
 #include "config.h"
 #include "constants.h"
 #include "diff-core.h"
+#include "diff-dir-panel.h"
 #include "diff-panel.h"
 #include "enum-utils.h"
 #include "feed.h"
@@ -41,6 +42,7 @@ enum class CommandMode
     None,
     Help,
     ConfigExplorer,
+    DiffDirPanel,
 };
 
 using namespace UI;
@@ -134,6 +136,7 @@ struct RenderCoreData
     Glyph::Atlas* atlas;
     Feed::MessageFeed* feed;
     Diff::DiffPanel* diff_panel;
+    Diff::DiffDirPanel* diff_dir_panel;
     Config::Explorer* config_explorer;
     Help::Help* help;
     MsFrameCounter* ms_frame_counter;
@@ -256,6 +259,19 @@ void build_arena_report(RenderCoreData* data)
 
     if (resp.open_locus)
     {
+    }
+}
+
+void build_diff_dir_panel(RenderCoreData* data)
+{
+    auto resp = Diff::build_diff_dir_panel(data->diff_dir_panel,
+                                            data->cmd_lst,
+                                            data->core_draw_lst,
+                                            data->ui_state,
+                                            data->feed);
+    if (resp.close)
+    {
+        clear_command_mode(data);
     }
 }
 
@@ -702,7 +718,12 @@ void render_core(RenderCoreData* data)
                             hex_to_vec4f(0xFFFFFF00));
     }
 
-    // Build viewer last because widgets are layered on top.
+    if (*data->cmd_mode == CommandMode::DiffDirPanel)
+    {
+        build_diff_dir_panel(data);
+    }
+
+    // Build this last.
     {
         auto resp = Diff::build_diff_panel(data->diff_panel, data->cmd_lst, data->core_draw_lst, data->ui_state, data->feed);
         if (resp.updated_cfg)
@@ -737,12 +758,12 @@ void render_core(RenderCoreData* data)
     // Add the core draw list.
     // Note: We add this _after_ any draw lists added above because this needs to be
     // drawn on top of everything else.
-    CmdBuffer::push_draw_list(data->cmd_lst, data->core_draw_lst);
+    CmdBuffer::push_draw_list(data->cmd_lst, CmdBuffer::DrawListLayer::_0, data->core_draw_lst);
 
     // The above is a bit of a lie.  We want to draw tooltips on top of everything.
     if (data->ui_state->tooltip.enabled)
     {
-        CmdBuffer::push_draw_list(data->cmd_lst, data->ui_state->tooltip.lst);
+        CmdBuffer::push_draw_list(data->cmd_lst, CmdBuffer::DrawListLayer::_0, data->ui_state->tooltip.lst);
     }
 
     CmdBuffer::pop_clip(data->core_draw_lst);
@@ -1157,6 +1178,13 @@ void process_global_events(RenderCoreData* data)
         data->config_explorer->start(*data->screen, data->ui_state);
     }
 
+    if (hotkey(*state, Hotkey::GLB_OpenDiffDirPanel)
+        and (*data->cmd_mode == CommandMode::None))
+    {
+        change_mode(data->cmd_mode, CommandMode::DiffDirPanel);
+        Diff::diff_dir_panel_start(data->diff_dir_panel, *data->screen, data->ui_state);
+    }
+
     // An additional way to increase the font size is to wheel the mouse.
     const bool wheel_font_down = implies(state->mods, KeyMods::Ctrl) and vscroll(*state) == VScrollResult::Down;
     if (hotkey(*state, Hotkey::GLB_DecreaseFontSize)
@@ -1417,12 +1445,14 @@ int gap_main_entry(int argc, char** argv)
     Help::Help help{ &atlas };
     Arena::Report::ArenaReport arena_report{ &atlas };
     Diff::DiffPanel* diff_panel = Diff::make_diff_panel(&atlas);
+    Diff::DiffDirPanel* diff_dir_panel = Diff::make_diff_dir_panel(&atlas);
 
     // Setup various command palettes.
     atlas.sync_config();
     config_explorer.sync_config();
     help.sync_config();
     arena_report.sync_config();
+    Diff::diff_dir_panel_sync_config(diff_dir_panel);
 
     RenderCoreData render_core_data = {
         .screen = &screen,
@@ -1431,6 +1461,7 @@ int gap_main_entry(int argc, char** argv)
         .atlas = &atlas,
         .feed = &message_feed,
         .diff_panel = diff_panel,
+        .diff_dir_panel = diff_dir_panel,
         .config_explorer = &config_explorer,
         .help = &help,
         .ms_frame_counter = &ms_frame_counter,
@@ -1600,6 +1631,7 @@ namespace UI
 #include "config-explorer.cpp"
 #include "config.cpp"
 #include "diff-core.cpp"
+#include "diff-dir-panel.cpp"
 #include "diff-panel.cpp"
 #include "diff-text.cpp"
 #include "feed.cpp"

@@ -136,7 +136,7 @@ namespace CmdBuffer
 
     struct CmdList
     {
-        DrawListCollection draw_list;
+        DrawListCollection draw_list[count_of<DrawListLayer>];
         Arena::Arena* cmd_list_arena;
     };
 

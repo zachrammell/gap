@@ -451,9 +451,13 @@ namespace CmdBuffer
 
     void end_frame(CmdList* cmd_lst)
     {
-        for EachNode(n, cmd_lst->draw_list.first)
+        for EachIndex(i, count_of<DrawListLayer>)
         {
-            end_frame(n->lst);
+            DrawListCollection* lst = &cmd_lst->draw_list[i];
+            for EachNode(n, lst->first)
+            {
+                end_frame(n->lst);
+            }
         }
     }
 
@@ -544,18 +548,19 @@ namespace CmdBuffer
         return &top(lst.color_palettes)->color_palette;
     }
 
-    void push_draw_list(CmdList* cmd_lst, DrawList* lst)
+    void push_draw_list(CmdList* cmd_lst, DrawListLayer layer, DrawList* lst)
     {
         DrawListCollectionNode* node = Arena::push_array<DrawListCollectionNode>(cmd_lst->cmd_list_arena, 1);
         node->lst = lst;
-        SLLQueuePush(cmd_lst->draw_list.first, cmd_lst->draw_list.last, node);
-        ++cmd_lst->draw_list.count;
+        DrawListCollection* lst_c = &cmd_lst->draw_list[rep(layer)];
+        SLLQueuePush(lst_c->first, lst_c->last, node);
+        ++lst_c->count;
     }
 
     void cmd_list_consumed(CmdList* cmd_lst)
     {
         // We just clear the arena.
-        cmd_lst->draw_list = DrawListCollection{};
+        zero_bytes(cmd_lst->draw_list, count_of<DrawListLayer>);
         Arena::clear(cmd_lst->cmd_list_arena);
         // Remove all staged deallocations.
         while (draw_lst_alloc->dead.first != nullptr)

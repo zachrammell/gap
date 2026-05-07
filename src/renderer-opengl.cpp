@@ -1736,77 +1736,81 @@ namespace Render
         constexpr auto draw_sort = GL_DYNAMIC_DRAW;
 #endif
 
-        for EachNode(lst_n, cmd_list->draw_list.first)
+        for EachIndex(i, count_of<CmdBuffer::DrawListLayer>)
         {
-            CmdBuffer::DrawList* lst = lst_n->lst;
-            populate_buffers(lst->vert_buf, lst->idx_buf);
-#if 0
-            const GLsizeiptr vert_buf_size = lst->vert_buf.count * sizeof(CmdBuffer::DrawVertex);
-            const GLsizeiptr idx_buf_size = lst->idx_buf.count * sizeof(CmdBuffer::Index);
-            glBufferData(GL_ARRAY_BUFFER, size_for_buffer(vert_buf_size), (const GLvoid*)lst->vert_buf.buf, draw_sort);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_for_buffer(idx_buf_size), (const GLvoid*)lst->idx_buf.buf, draw_sort);
-#endif
-            glEnable(GL_SCISSOR_TEST);
-            // It's possible that the screen resolution updates via a command below.
-            auto res = lst->screen;
-            for EachNode(cmd_n, lst->cmd_buf.first)
+            CmdBuffer::DrawListCollection* lst_c = &cmd_list->draw_list[i];
+            for EachNode(lst_n, lst_c->first)
             {
-                const CmdBuffer::DrawCmd& cmd = cmd_n->cmd;
-                switch (cmd.sort)
-                {
-                case CmdBuffer::CmdSort::Standard:
-                    {
-                        auto& std_data = cmd.std_data;
-                        glViewport(rep(cmd.clip_rect.offset_x),
-                                    rep(cmd.clip_rect.offset_y),
-                                    rep(res.width),
-                                    rep(res.height));
-
-                        glScissor(rep(cmd.clip_rect.offset_x),
-                                    rep(cmd.clip_rect.offset_y),
-                                    rep(cmd.clip_rect.width),
-                                    rep(cmd.clip_rect.height));
-                        bind_basic_texture(std_data.tex);
-                        renderer->apply_blending_mode(std_data.blend);
-                        renderer->set_shader(std_data.vert);
-                        renderer->set_shader(std_data.frag);
-                        // If this changes, we need to adjust the element size argument to glDrawElements.
-                        static_assert(sizeof(CmdBuffer::Index) == 4);
-                        glDrawElements(GL_TRIANGLES,
-                                        static_cast<GLsizei>(std_data.idx_count),
-                                        GL_UNSIGNED_INT,
-                                        reinterpret_cast<void*>(static_cast<intptr_t>(rep(std_data.idx_off) * sizeof(CmdBuffer::Index))));
-                    }
-                    break;
-                case CmdBuffer::CmdSort::Blur:
-                    // TODO: Split this out into multiple commands?
-                    setup_legacy_vertex_buffer();
-                    Effects::standard_window_blur(renderer, lst->screen, UI::convert(cmd.clip_rect));
-                    // Rebind to original buffers.
-                    setup_cmd_list_vertex_buffer(cmd_buffers);
+                CmdBuffer::DrawList* lst = lst_n->lst;
+                populate_buffers(lst->vert_buf, lst->idx_buf);
 #if 0
-                    glBufferData(GL_ARRAY_BUFFER, vert_buf_size, (const GLvoid*)lst->vert_buf.buf, draw_sort);
-                    glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx_buf_size, (const GLvoid*)lst->idx_buf.buf, draw_sort);
+                const GLsizeiptr vert_buf_size = lst->vert_buf.count * sizeof(CmdBuffer::DrawVertex);
+                const GLsizeiptr idx_buf_size = lst->idx_buf.count * sizeof(CmdBuffer::Index);
+                glBufferData(GL_ARRAY_BUFFER, size_for_buffer(vert_buf_size), (const GLvoid*)lst->vert_buf.buf, draw_sort);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_for_buffer(idx_buf_size), (const GLvoid*)lst->idx_buf.buf, draw_sort);
 #endif
-                    break;
-                case CmdBuffer::CmdSort::CameraUpdate:
+                glEnable(GL_SCISSOR_TEST);
+                // It's possible that the screen resolution updates via a command below.
+                auto res = lst->screen;
+                for EachNode(cmd_n, lst->cmd_buf.first)
+                {
+                    const CmdBuffer::DrawCmd& cmd = cmd_n->cmd;
+                    switch (cmd.sort)
                     {
-                        renderer->camera(cmd.camera_up);
-                    }
-                    break;
-                case CmdBuffer::CmdSort::ResolutionUpdate:
-                    {
-                        auto& res_up = cmd.res_up;
-                        res = res_up;
-                        renderer->resolution(Vec2f(rep(res_up.width) + 0.f, rep(res_up.height) + 0.f));
-                    }
-                    break;
-                }
-            }
-            glDisable(GL_SCISSOR_TEST);
+                    case CmdBuffer::CmdSort::Standard:
+                        {
+                            auto& std_data = cmd.std_data;
+                            glViewport(rep(cmd.clip_rect.offset_x),
+                                        rep(cmd.clip_rect.offset_y),
+                                        rep(res.width),
+                                        rep(res.height));
 
-            // Reset the viewport as well.
-            glViewport(0, 0, rep(lst->screen.width), rep(lst->screen.height));
+                            glScissor(rep(cmd.clip_rect.offset_x),
+                                        rep(cmd.clip_rect.offset_y),
+                                        rep(cmd.clip_rect.width),
+                                        rep(cmd.clip_rect.height));
+                            bind_basic_texture(std_data.tex);
+                            renderer->apply_blending_mode(std_data.blend);
+                            renderer->set_shader(std_data.vert);
+                            renderer->set_shader(std_data.frag);
+                            // If this changes, we need to adjust the element size argument to glDrawElements.
+                            static_assert(sizeof(CmdBuffer::Index) == 4);
+                            glDrawElements(GL_TRIANGLES,
+                                            static_cast<GLsizei>(std_data.idx_count),
+                                            GL_UNSIGNED_INT,
+                                            reinterpret_cast<void*>(static_cast<intptr_t>(rep(std_data.idx_off) * sizeof(CmdBuffer::Index))));
+                        }
+                        break;
+                    case CmdBuffer::CmdSort::Blur:
+                        // TODO: Split this out into multiple commands?
+                        setup_legacy_vertex_buffer();
+                        Effects::standard_window_blur(renderer, lst->screen, UI::convert(cmd.clip_rect));
+                        // Rebind to original buffers.
+                        setup_cmd_list_vertex_buffer(cmd_buffers);
+#if 0
+                        glBufferData(GL_ARRAY_BUFFER, vert_buf_size, (const GLvoid*)lst->vert_buf.buf, draw_sort);
+                        glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx_buf_size, (const GLvoid*)lst->idx_buf.buf, draw_sort);
+#endif
+                        break;
+                    case CmdBuffer::CmdSort::CameraUpdate:
+                        {
+                            renderer->camera(cmd.camera_up);
+                        }
+                        break;
+                    case CmdBuffer::CmdSort::ResolutionUpdate:
+                        {
+                            auto& res_up = cmd.res_up;
+                            res = res_up;
+                            renderer->resolution(Vec2f(rep(res_up.width) + 0.f, rep(res_up.height) + 0.f));
+                        }
+                        break;
+                    }
+                }
+                glDisable(GL_SCISSOR_TEST);
+
+                // Reset the viewport as well.
+                glViewport(0, 0, rep(lst->screen.width), rep(lst->screen.height));
+            }
         }
 
         setup_legacy_vertex_buffer();

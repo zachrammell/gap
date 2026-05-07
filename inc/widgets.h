@@ -16,6 +16,7 @@ namespace UI::Widgets
         ConfigExplorer,
         ArenaReport,
         DiffPanel,
+        DiffDirPanel,
         ConfirmDlg,
 
         IdStart,

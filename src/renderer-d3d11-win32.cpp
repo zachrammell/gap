@@ -1046,99 +1046,103 @@ namespace Render
         // Prepare raster.
         ctx->RSSetState(rend_data->raster_state);
 
-        for EachNode(lst_n, cmd_lst->draw_list.first)
+        for EachIndex(i, count_of<CmdBuffer::DrawListLayer>)
         {
-            CmdBuffer::DrawList* lst = lst_n->lst;
-
-            // Obtain vert and index buffers.
-            D3DGenBufferInput buf_in = {
-                .wnd_data  = wnd_data,
-                .rend_data = rend_data,
-                .vert_buf  = lst->vert_buf,
-                .idx_buf   = lst->idx_buf,
-            };
-            D3DVertexBufferData buffers = gen_cmd_buffer_pair(buf_in);
-            // Vert and index buffers.
-            UINT stride = sizeof(CmdBuffer::DrawVertex);
-            UINT offset = 0;
-            ctx->IASetVertexBuffers(0, 1, &buffers.vert_buf, &stride, &offset);
-            ctx->IASetIndexBuffer(buffers.idx_buf, DXGI_FORMAT_R32_UINT, 0);
-            ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-            // It's possible that the screen resolution changes in each draw.
-            ScreenDimensions res = lst->screen;
-            for EachNode(cmd_n, lst->cmd_buf.first)
+            CmdBuffer::DrawListCollection* lst_c = &cmd_lst->draw_list[i];
+            for EachNode(lst_n, lst_c->first)
             {
-                const CmdBuffer::DrawCmd* cmd = &cmd_n->cmd;
-                switch (cmd->sort)
+                CmdBuffer::DrawList* lst = lst_n->lst;
+
+                // Obtain vert and index buffers.
+                D3DGenBufferInput buf_in = {
+                    .wnd_data  = wnd_data,
+                    .rend_data = rend_data,
+                    .vert_buf  = lst->vert_buf,
+                    .idx_buf   = lst->idx_buf,
+                };
+                D3DVertexBufferData buffers = gen_cmd_buffer_pair(buf_in);
+                // Vert and index buffers.
+                UINT stride = sizeof(CmdBuffer::DrawVertex);
+                UINT offset = 0;
+                ctx->IASetVertexBuffers(0, 1, &buffers.vert_buf, &stride, &offset);
+                ctx->IASetIndexBuffer(buffers.idx_buf, DXGI_FORMAT_R32_UINT, 0);
+                ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+                // It's possible that the screen resolution changes in each draw.
+                ScreenDimensions res = lst->screen;
+                for EachNode(cmd_n, lst->cmd_buf.first)
                 {
-                case CmdBuffer::CmdSort::Standard:
+                    const CmdBuffer::DrawCmd* cmd = &cmd_n->cmd;
+                    switch (cmd->sort)
                     {
-                        const CmdBuffer::StandardData* std_data = &cmd->std_data;
-                        // Setup viewport.
-                        vp.Width    = static_cast<float>(rep(res.width));
-                        vp.Height   = static_cast<float>(rep(res.height));
-                        vp.MinDepth = 0.f;
-                        vp.MaxDepth = 1.f;
-                        vp.TopLeftX = static_cast<float>(rep(cmd->clip_rect.offset_x));
-                        vp.TopLeftY = rep(rend_data->screen_size.height) - static_cast<float>(rep(cmd->clip_rect.offset_y)) - rep(res.height);
-                        ctx->RSSetViewports(1, &vp);
+                    case CmdBuffer::CmdSort::Standard:
+                        {
+                            const CmdBuffer::StandardData* std_data = &cmd->std_data;
+                            // Setup viewport.
+                            vp.Width    = static_cast<float>(rep(res.width));
+                            vp.Height   = static_cast<float>(rep(res.height));
+                            vp.MinDepth = 0.f;
+                            vp.MaxDepth = 1.f;
+                            vp.TopLeftX = static_cast<float>(rep(cmd->clip_rect.offset_x));
+                            vp.TopLeftY = rep(rend_data->screen_size.height) - static_cast<float>(rep(cmd->clip_rect.offset_y)) - rep(res.height);
+                            ctx->RSSetViewports(1, &vp);
 
-                        // Setup scissor.
-                        D3D11_RECT r = {
-                            .left   = rep(cmd->clip_rect.offset_x),
-                            .top    = rep(rend_data->screen_size.height) - (rep(cmd->clip_rect.height) + rep(cmd->clip_rect.offset_y)),
-                            .right  = rep(cmd->clip_rect.offset_x) + rep(cmd->clip_rect.width),
-                            .bottom = rep(rend_data->screen_size.height) - rep(cmd->clip_rect.offset_y),
-                        };
-                        ctx->RSSetScissorRects(1, &r);
+                            // Setup scissor.
+                            D3D11_RECT r = {
+                                .left   = rep(cmd->clip_rect.offset_x),
+                                .top    = rep(rend_data->screen_size.height) - (rep(cmd->clip_rect.height) + rep(cmd->clip_rect.offset_y)),
+                                .right  = rep(cmd->clip_rect.offset_x) + rep(cmd->clip_rect.width),
+                                .bottom = rep(rend_data->screen_size.height) - rep(cmd->clip_rect.offset_y),
+                            };
+                            ctx->RSSetScissorRects(1, &r);
 
-                        // Set shaders.
-                        swap_shader(wnd_data, rend_data, std_data->vert, std_data->frag);
+                            // Set shaders.
+                            swap_shader(wnd_data, rend_data, std_data->vert, std_data->frag);
 
-                        // Setup blend.
-                        constexpr float blend_fact[4] = {};
-                        ctx->OMSetBlendState(rend_data->blend_modes[rep(std_data->blend)], blend_fact, 0xffffffff);
-                        ctx->OMSetDepthStencilState(rend_data->noop_stencil, 0);
+                            // Setup blend.
+                            constexpr float blend_fact[4] = {};
+                            ctx->OMSetBlendState(rend_data->blend_modes[rep(std_data->blend)], blend_fact, 0xffffffff);
+                            ctx->OMSetDepthStencilState(rend_data->noop_stencil, 0);
 
-                        // Bind texture.
-                        D3DEntity* tex = basic_texture_d3d(std_data->tex);
-                        ctx->PSSetShaderResources(0, 1, &tex->tex.tex_view);
-                        // Note: Our indices are absolute offsets into the vertex buffer so we don't need to add an offset for the base vertex value.
-                        ctx->DrawIndexed(rep(std_data->idx_count), rep(std_data->idx_off), 0);
+                            // Bind texture.
+                            D3DEntity* tex = basic_texture_d3d(std_data->tex);
+                            ctx->PSSetShaderResources(0, 1, &tex->tex.tex_view);
+                            // Note: Our indices are absolute offsets into the vertex buffer so we don't need to add an offset for the base vertex value.
+                            ctx->DrawIndexed(rep(std_data->idx_count), rep(std_data->idx_off), 0);
+                        }
+                        break;
+                    case CmdBuffer::CmdSort::Blur:
+                        {
+                            WindowBlurInput in = {
+                                .wnd_data    = wnd_data,
+                                .rend_data   = rend_data,
+                                .screen      = rend_data->screen_size,
+                                .window_clip = cmd->clip_rect
+                            };
+                            apply_standard_window_blur(in);
+                            // Restore the standard buffers.
+                            stride = sizeof(CmdBuffer::DrawVertex);
+                            offset = 0;
+                            ctx->IASetVertexBuffers(0, 1, &buffers.vert_buf, &stride, &offset);
+                            ctx->IASetIndexBuffer(buffers.idx_buf, DXGI_FORMAT_R32_UINT, 0);
+                            ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                        }
+                        break;
+                    case CmdBuffer::CmdSort::CameraUpdate:
+                        {
+                            const Camera* camera                    = &cmd->camera_up;
+                            rend_data->uniforms.camera_pos          = camera->pos;
+                            rend_data->uniforms.camera_scale        = camera->scale;
+                            rend_data->uniforms.camera_coord_factor = Constants::shader_scale_factor;
+                        }
+                        break;
+                    case CmdBuffer::CmdSort::ResolutionUpdate:
+                        {
+                            rend_data->uniforms.resolution = { rep(cmd->res_up.width) + 0.f, rep(cmd->res_up.height) + 0.f };
+                            res = cmd->res_up;
+                        }
+                        break;
                     }
-                    break;
-                case CmdBuffer::CmdSort::Blur:
-                    {
-                        WindowBlurInput in = {
-                            .wnd_data    = wnd_data,
-                            .rend_data   = rend_data,
-                            .screen      = rend_data->screen_size,
-                            .window_clip = cmd->clip_rect
-                        };
-                        apply_standard_window_blur(in);
-                        // Restore the standard buffers.
-                        stride = sizeof(CmdBuffer::DrawVertex);
-                        offset = 0;
-                        ctx->IASetVertexBuffers(0, 1, &buffers.vert_buf, &stride, &offset);
-                        ctx->IASetIndexBuffer(buffers.idx_buf, DXGI_FORMAT_R32_UINT, 0);
-                        ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                    }
-                    break;
-                case CmdBuffer::CmdSort::CameraUpdate:
-                    {
-                        const Camera* camera                    = &cmd->camera_up;
-                        rend_data->uniforms.camera_pos          = camera->pos;
-                        rend_data->uniforms.camera_scale        = camera->scale;
-                        rend_data->uniforms.camera_coord_factor = Constants::shader_scale_factor;
-                    }
-                    break;
-                case CmdBuffer::CmdSort::ResolutionUpdate:
-                    {
-                        rend_data->uniforms.resolution = { rep(cmd->res_up.width) + 0.f, rep(cmd->res_up.height) + 0.f };
-                        res = cmd->res_up;
-                    }
-                    break;
                 }
             }
         }

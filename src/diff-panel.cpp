@@ -885,7 +885,7 @@ namespace Diff
             base_pos.y = static_cast<float>(rep(clip.height));
             // Add function buttons.
             {
-                UI::Widgets::ID btn_ids[] = 
+                UI::Widgets::ID btn_ids[] =
                 {
                     UI::Widgets::make_id_seed(panel->id, "swap-diffs"),
                     UI::Widgets::make_id_seed(panel->id, "toggle-inr-diff-fmt"),
@@ -1244,7 +1244,7 @@ namespace Diff
             CmdBuffer::pop_texture(child->draw_lst);
             CmdBuffer::pop_color_palette(child->draw_lst);
 
-            CmdBuffer::push_draw_list(cmd_lst, child->draw_lst);
+            CmdBuffer::push_draw_list(cmd_lst, CmdBuffer::DrawListLayer::_0, child->draw_lst);
         }
 
         for EachIndex(i, std::size(scroll_changed))
@@ -1265,7 +1265,7 @@ namespace Diff
         CmdBuffer::pop_texture(panel->frame_lst);
         CmdBuffer::pop_color_palette(panel->frame_lst);
 
-        CmdBuffer::push_draw_list(cmd_lst, panel->frame_lst);
+        CmdBuffer::push_draw_list(cmd_lst, CmdBuffer::DrawListLayer::_0, panel->frame_lst);
         return resp;
     }
 } // namespace Diff

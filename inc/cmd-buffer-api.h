@@ -54,7 +54,7 @@ namespace CmdBuffer
     const ColorPalette* current_palette(const DrawList& lst);
 
     // State interaction.
-    void push_draw_list(CmdList* cmd_lst, DrawList* lst);
+    void push_draw_list(CmdList* cmd_lst, DrawListLayer layer, DrawList* lst);
     void cmd_list_consumed(CmdList* cmd_lst);
     void push_clip(DrawList* lst, ClipRect clip);
     void pop_clip(DrawList* lst);
