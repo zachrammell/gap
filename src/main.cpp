@@ -1093,6 +1093,13 @@ void process_global_events(RenderCoreData* data)
             data->feed->queue_info(msg);
             Diff::try_file_drop(data->diff_panel, first_file, state, data->feed);
         }
+        else if (*data->cmd_mode == CommandMode::DiffDirPanel
+                and OS::directory_exists(first_file))
+        {
+            String8 msg = fmt_string(fmt_buf, "Dropped: %S.", first_file);
+            data->feed->queue_info(msg);
+            Diff::try_dir_drop(data->diff_dir_panel, first_file, state, data->feed);
+        }
         else
         {
             String8 msg = fmt_string(fmt_buf, "Cannot drop: %S.", first_file);

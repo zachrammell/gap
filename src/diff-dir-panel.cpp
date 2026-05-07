@@ -6,6 +6,7 @@
 #include "basic-window.h"
 #include "diff-text.h"
 #include "gap-core.h"
+#include "os.h"
 #include "timers.h"
 #include "tooltips.h"
 
@@ -13,6 +14,19 @@ namespace Diff
 {
     namespace
     {
+        struct FlatDirEntry
+        {
+            FlatDirEntry* next;
+            OS::DirIterResult item;
+        };
+
+        struct FlatDirEntryList
+        {
+            FlatDirEntry* first;
+            FlatDirEntry* last;
+            uint64_t count;
+        };
+
         struct DiffDirPanelUIData
         {
             float wheel_offset_amount;
@@ -24,6 +38,8 @@ namespace Diff
 
             PartitionDirPanel* sib_next;
             PartitionDirPanel* sib_prev;
+            Arena::Arena* dir_entries_arena;
+            FlatDirEntryList dir_entries;
             CmdBuffer::DrawList* draw_lst;
             UI::Widgets::ID id;
             float pct_of_parent;
@@ -66,6 +82,8 @@ namespace Diff
         {
             panel->id = UI::Widgets::make_id_seed_idx(seed_id, seed_idx);
             panel->draw_lst = CmdBuffer::alloc_draw_list();
+            panel->dir_entries_arena = Arena::alloc(Arena::default_params);
+            panel->dir_entries = {};
             panel->ease_offset = 1.f;
             panel->pct_of_parent = .5f;
             panel->sib_next = panel->sib_prev = null_dir_panel();
@@ -80,6 +98,73 @@ namespace Diff
             viewport.offset_x = Render::ViewportOffsetX{ static_cast<int>(center.x - rep(viewport.width) / 2) };
             viewport.offset_y = Render::ViewportOffsetY{ static_cast<int>(center.y - rep(viewport.height) / 2) };
             return viewport;
+        }
+
+        void push_flat_dir_entry(Arena::Arena* arena, FlatDirEntryList* lst, OS::DirIterResult item)
+        {
+            FlatDirEntry* e = Arena::push_array<FlatDirEntry>(arena, 1);
+            e->item = item;
+            e->item.path = str8_copy(arena, e->item.path);
+            SLLQueuePush(lst->first, lst->last, e);
+            ++lst->count;
+        }
+
+        void populate_flattend_dir_entries(Arena::Arena* arena, FlatDirEntryList* lst, String8 path, Feed::MessageFeed* feed)
+        {
+            if (not OS::directory_exists(path))
+            {
+                String8 msg = str8_fmt(arena, "Dropped path '%S' is not a directory.", path);
+                feed->queue_error(msg);
+                return;
+            }
+            auto scratch = Arena::scratch_begin({ &arena, 1 });
+            OS::DirIterResult item;
+            // Create a queue for recursive directories.
+            String8Node* head = Arena::push_array<String8Node>(arena, 1);
+            String8Node* free_lst = nullptr;
+            head->string = path;
+            do
+            {
+                String8 dir = head->string;
+                {
+                    String8Node* n = head;
+                    SLLStackPop(head);
+                    SLLStackPush(free_lst, n);
+                }
+                OS::DirIter os_itr = OS::open_dir_iter(dir, OS::DirIterFlags::FullPath);
+                // Do we have a good iterator?
+                if (os_itr != OS::DirIter::Sentinel)
+                {
+                    do
+                    {
+                        if (not OS::dir_iter_next(scratch.arena, &item, os_itr))
+                            break;
+                        if (implies(item.props.props, OS::FileProperty::Directory))
+                        {
+                            String8Node* next_dir = free_lst;
+                            if (next_dir != nullptr)
+                            {
+                                SLLStackPop(free_lst);
+                                zero_bytes(next_dir);
+                            }
+                            else
+                            {
+                                next_dir = Arena::push_array<String8Node>(scratch.arena, 1);
+                            }
+                            // Note: This string lives in the scratch arena with our stack nodes.
+                            next_dir->string = item.path;
+                            SLLStackPush(head, next_dir);
+                        }
+                        // Otherwise, regular file.
+                        else
+                        {
+                            push_flat_dir_entry(arena, lst, item);
+                        }
+                    } while (true);
+                    OS::close_dir_iter(os_itr);
+                }
+            } while (head != nullptr);
+            Arena::scratch_end(scratch);
         }
     } // namespace [anon]
 
@@ -129,7 +214,7 @@ namespace Diff
             not null_dir_panel(child);
             child = child->sib_next)
         {
-            // TODO: Release panel-specific resources.
+            Arena::release(child->dir_entries_arena);
         }
         CmdBuffer::release_draw_list(panel->frame_lst);
         CmdBuffer::release_draw_list(panel->A.draw_lst);
@@ -159,34 +244,27 @@ namespace Diff
 
     void try_dir_drop(DiffDirPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed)
     {
-        (void)panel, path, state, feed;
-#if 0
-        bool diff_applied = false;
-        CmdBuffer::ClipRect clip = CmdBuffer::ClipRect::basic(CmdBuffer::screen(*panel->frame_lst));
+        bool dir_evaluated = false;
+        CmdBuffer::ClipRect clip = UI::convert(panel->window->content_viewport(panel->window->window_viewport()));
         // Test to see which panel the mouse is over, populate the file and reapply diffs.
-        for (PartitionPanel* child = &panel->A;
-            not null_panel(child);
+        for (PartitionDirPanel* child = &panel->A;
+            not null_dir_panel(child);
             child = child->sib_next)
         {
             CmdBuffer::ClipRect child_clip = clip_from_parent(clip, &panel->A, child);
             if (mouse_in_clip(state->mouse.ui_mouse, child_clip))
             {
-                auto scratch = Arena::scratch_begin(Arena::no_conflicts);
-                TextFile new_file = text_file_read(scratch.arena, path);
-                // Apply the text file.
-                populate_text(child->view, new_file);
-                apply_diff(panel, feed);
-                Arena::scratch_end(scratch);
-                diff_applied = true;
+                child->dir_entries = {};
+                Arena::clear(child->dir_entries_arena);
+                populate_flattend_dir_entries(child->dir_entries_arena, &child->dir_entries, path, feed);
                 break;
             }
         }
 
-        if (not diff_applied)
+        if (not dir_evaluated)
         {
-            feed->queue_warning("Please drop file over specific diff side to apply diffs.");
+            feed->queue_warning("Please drop file over specific side to apply directory diffs.");
         }
-#endif
     }
 
     // Building.
@@ -220,11 +298,11 @@ namespace Diff
         // Now we can constrain the clip.
         clip = UI::convert(panel->window->content_viewport(panel->window->window_viewport()));
         CmdBuffer::push_clip(panel->frame_lst, clip);
+        Glyph::FontSize font_size = Glyph::FontSize{ Config::diff_state().diff_font_size };
 
         // Build panel decoration UI.
         {
             CmdBuffer::ClipRect header_clip = clip;
-            Glyph::FontSize font_size = Glyph::FontSize{ Config::diff_state().diff_font_size };
             auto font_ctx = panel->atlas->render_font_context(font_size);
             header_clip.height = Height(UI::standard_font_padding(font_size) * 2);
             Vec2f base_pos;
@@ -256,7 +334,7 @@ namespace Diff
         {
             CmdBuffer::start_shapes(panel->frame_lst, Render::VertShader::OneOneTransform);
             Vec4f region_color = colors.outline_selection;
-            const float boundary_width_bias = Config::diff_state().diff_font_size / 3.f;
+            const float boundary_width_bias = rep(font_size) / 3.f;
             for (PartitionDirPanel* child = &panel->A;
                 // Non-leaf UI does only involves inner-panels (e.g. the fence post problem).
                 not null_dir_panel(child) and not null_dir_panel(child->sib_next);
@@ -373,13 +451,24 @@ namespace Diff
             CmdBuffer::push_color_palette(child->draw_lst, *CmdBuffer::current_palette(*core_lst));
 
             // Build core widget.
-            // TODO.
+            {
+                Glyph::RenderFontContext font_ctx = panel->atlas->render_font_context(font_size);
+                const int line_height = font_ctx.current_font_line_height();
+                Vec2f start_pos;
+                start_pos.y = static_cast<float>(rep(child_clip.height) - line_height);
+                CmdBuffer::start_glyph_run(child->draw_lst, Render::VertShader::OneOneTransform);
+                for EachNode(n, child->dir_entries.first)
+                {
+                    font_ctx.render_text(child->draw_lst, n->item.path, start_pos, colors.window_title_font_color);
+                    start_pos.y -= line_height;
+                }
+            }
 
             CmdBuffer::pop_clip(child->draw_lst);
             CmdBuffer::pop_texture(child->draw_lst);
             CmdBuffer::pop_color_palette(child->draw_lst);
 
-            CmdBuffer::push_draw_list(cmd_lst, CmdBuffer::DrawListLayer::_1, child->draw_lst);
+            CmdBuffer::push_draw_list(cmd_lst, CmdBuffer::DrawListLayer::_2, child->draw_lst);
         }
 
         panel->window->end(state);

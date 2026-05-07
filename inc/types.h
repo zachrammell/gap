@@ -163,6 +163,7 @@ namespace CmdBuffer
     {
         _0,
         _1,
+        _2,
         Count
     };
 
