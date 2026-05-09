@@ -23,7 +23,10 @@ namespace Diff
     // Interaction.
     void diff_dir_panel_start(DiffDirPanel* panel, const ScreenDimensions& screen, UI::UIState* state);
     void diff_dir_panel_sync_config(DiffDirPanel* panel);
-    void try_dir_drop(DiffDirPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed);
+    void diff_dir_panel_dir_A(DiffDirPanel* panel, String8 path, Feed::MessageFeed* feed);
+    void diff_dir_panel_dir_B(DiffDirPanel* panel, String8 path, Feed::MessageFeed* feed);
+    void diff_dir_panel_apply_diff(DiffDirPanel* panel, Feed::MessageFeed* feed);
+    void diff_dir_panel_try_dir_drop(DiffDirPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed);
 
     // Building.
     DiffDirPanelResponse build_diff_dir_panel(DiffDirPanel* panel,

@@ -19,6 +19,7 @@
 #include "constants.h"
 #include "diff-core.h"
 #include "diff-dir-panel.h"
+#include "diff-dir-list.h"
 #include "diff-panel.h"
 #include "enum-utils.h"
 #include "feed.h"
@@ -157,7 +158,8 @@ void notify_config_update(NotifyConfigExplorer notify_explorer, RenderCoreData* 
     render_data->atlas->sync_config();
     render_data->help->sync_config();
     render_data->arena_report->sync_config();
-    Diff::sync_config(render_data->diff_panel, render_data->feed);
+    Diff::diff_panel_sync_config(render_data->diff_panel, render_data->feed);
+    Diff::diff_dir_panel_sync_config(render_data->diff_dir_panel);
 
     if (is_yes(notify_explorer))
     {
@@ -1091,14 +1093,14 @@ void process_global_events(RenderCoreData* data)
         {
             String8 msg = fmt_string(fmt_buf, "Dropped: %S.", first_file);
             data->feed->queue_info(msg);
-            Diff::try_file_drop(data->diff_panel, first_file, state, data->feed);
+            Diff::diff_panel_try_file_drop(data->diff_panel, first_file, state, data->feed);
         }
         else if (*data->cmd_mode == CommandMode::DiffDirPanel
                 and OS::directory_exists(first_file))
         {
             String8 msg = fmt_string(fmt_buf, "Dropped: %S.", first_file);
             data->feed->queue_info(msg);
-            Diff::try_dir_drop(data->diff_dir_panel, first_file, state, data->feed);
+            Diff::diff_dir_panel_try_dir_drop(data->diff_dir_panel, first_file, state, data->feed);
         }
         else
         {
@@ -1486,6 +1488,7 @@ int gap_main_entry(int argc, char** argv)
 
     // Now that the atlas is populated, we can load the file(s).
     {
+        bool loaded_dir_a = false;
         if (argc > 1)
         {
             auto scratch = Arena::scratch_begin(Arena::no_conflicts);
@@ -1500,14 +1503,26 @@ int gap_main_entry(int argc, char** argv)
                     Diff::TextFile file = Diff::text_file_read(tmp.arena, path);
                     if (not loaded_a)
                     {
-                        Diff::file_A(diff_panel, file);
+                        Diff::diff_panel_file_A(diff_panel, file);
                         loaded_a = true;
                     }
                     else
                     {
-                        Diff::file_B(diff_panel, file);
+                        Diff::diff_panel_file_B(diff_panel, file);
                     }
                     Arena::temp_end(tmp);
+                }
+                else if (OS::directory_exists(path))
+                {
+                    if (not loaded_dir_a)
+                    {
+                        Diff::diff_dir_panel_dir_A(diff_dir_panel, path, &message_feed);
+                        loaded_dir_a = true;
+                    }
+                    else
+                    {
+                        Diff::diff_dir_panel_dir_B(diff_dir_panel, path, &message_feed);
+                    }
                 }
                 else
                 {
@@ -1518,7 +1533,14 @@ int gap_main_entry(int argc, char** argv)
             }
             Arena::scratch_end(scratch);
         }
-        Diff::apply_diff(diff_panel, &message_feed);
+        Diff::diff_panel_apply_diff(diff_panel, &message_feed);
+        // Open the directory comparison panel.
+        if (loaded_dir_a)
+        {
+            // Apply the diff as well.
+            Diff::diff_dir_panel_apply_diff(diff_dir_panel, &message_feed);
+            ui_state.hotkeys.next_frame_hk = Hotkey::GLB_OpenDiffDirPanel;
+        }
     }
 
     PROF_END(main_ctx);
@@ -1639,6 +1661,7 @@ namespace UI
 #include "config.cpp"
 #include "diff-core.cpp"
 #include "diff-dir-panel.cpp"
+#include "diff-dir-list.cpp"
 #include "diff-panel.cpp"
 #include "diff-text.cpp"
 #include "feed.cpp"

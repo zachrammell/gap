@@ -20,11 +20,11 @@ namespace Diff
     void release_diff_panel(DiffPanel* panel);
 
     // Interaction.
-    void file_A(DiffPanel* panel, const TextFile& file);
-    void file_B(DiffPanel* panel, const TextFile& file);
-    void apply_diff(DiffPanel* panel, Feed::MessageFeed* feed);
-    void sync_config(DiffPanel* panel, Feed::MessageFeed* feed);
-    void try_file_drop(DiffPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed);
+    void diff_panel_file_A(DiffPanel* panel, const TextFile& file);
+    void diff_panel_file_B(DiffPanel* panel, const TextFile& file);
+    void diff_panel_apply_diff(DiffPanel* panel, Feed::MessageFeed* feed);
+    void diff_panel_sync_config(DiffPanel* panel, Feed::MessageFeed* feed);
+    void diff_panel_try_file_drop(DiffPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed);
 
     // Building.
     DiffPanelResponse build_diff_panel(DiffPanel* panel,

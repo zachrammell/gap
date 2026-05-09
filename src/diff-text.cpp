@@ -25,6 +25,7 @@ namespace Diff
         uint64_t max_line;
         int64_t idx_page_jump;
         int64_t idx_mid;
+        UI::Widgets::ID id;
         UI::Widgets::IndexedScrollBox* scroll;
         Glyph::Atlas* atlas;
     };
@@ -191,6 +192,7 @@ namespace Diff
             widget->scroll = new(blob) UI::Widgets::IndexedScrollBox{ id };
             widget->scroll->scroll_to({});
         }
+        widget->id = id;
         widget->base_pos = Arena::pos(arena);
         widget->atlas = atlas;
         return widget;
@@ -445,7 +447,7 @@ namespace Diff
         UI::Widgets::IndexedScrollContentSize scroll_size = content_size(widget, &font_ctx);
         const int line_height = font_ctx.current_font_line_height();
         // Process input.
-        if (mouse_in_clip(state->mouse.ui_mouse, clip))
+        if (UI::empty_focus_widget(*state) and mouse_in_clip(state->mouse.ui_mouse, clip))
         {
             if (hotkey(*state, Hotkey::GLB_TextLineDown))
             {
@@ -512,6 +514,10 @@ namespace Diff
             widget->scroll->content_size(scroll_size);
             auto r = widget->scroll->build(lst, state, wheel_offset_amt, UI::Widgets::BuildScrollBoxFlags::None);
             resp.scroll_changed |= r.scroll_changed;
+            if (resp.scroll_changed)
+            {
+                UI::try_set_focus_widget(state, widget->id);
+            }
         }
         CmdBuffer::push_clip(lst, content_clip);
 

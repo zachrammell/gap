@@ -25,10 +25,10 @@ namespace Diff
 
             PartitionDirPanel* sib_next;
             PartitionDirPanel* sib_prev;
-            Arena::Arena* dir_entries_arena;
-            FlatDirEntryList dir_entries;
             CmdBuffer::DrawList* draw_lst;
+            Arena::Arena* text_file_arena;
             UI::Widgets::ID id;
+            DiffDirListView* view;
             float pct_of_parent;
             float ease_offset;
         };
@@ -65,15 +65,16 @@ namespace Diff
             return UI::vec_as_clip(clip);
         }
 
-        void init_dir_panel(PartitionDirPanel* panel, UI::Widgets::ID seed_id, uint32_t seed_idx, Glyph::Atlas*)
+        void init_dir_panel(PartitionDirPanel* panel, UI::Widgets::ID seed_id, uint32_t seed_idx, Glyph::Atlas* atlas)
         {
             panel->id = UI::Widgets::make_id_seed_idx(seed_id, seed_idx);
             panel->draw_lst = CmdBuffer::alloc_draw_list();
-            panel->dir_entries_arena = Arena::alloc(Arena::default_params);
-            panel->dir_entries = {};
+            panel->text_file_arena = Arena::alloc(Arena::default_params);
             panel->ease_offset = 1.f;
             panel->pct_of_parent = .5f;
             panel->sib_next = panel->sib_prev = null_dir_panel();
+            // Allocate the diff dir view.
+            panel->view = make_diff_dir_list_view(atlas, UI::Widgets::make_id_seed(panel->id, "dir_view"));
         }
 
         Render::RenderViewport initial_window_viewport(const ScreenDimensions& screen)
@@ -126,52 +127,71 @@ namespace Diff
                 return;
             }
             auto scratch = Arena::scratch_begin({ &arena, 1 });
-            OS::DirIterResult item;
-            // Create a queue for recursive directories.
-            String8Node* head = Arena::push_array<String8Node>(arena, 1);
-            String8Node* free_lst = nullptr;
-            head->string = path;
-            do
+            // First, we need to canonicalize the path.
+            String8 canon_path = str8_empty;
+            // Just allocate to output arena for list.
+            OS::Error err = OS::canonical_file_path(arena, &canon_path, path);
+            bool good = true;
+            if (err != OS::Error::None)
             {
-                String8 dir = head->string;
+                String8 msg = str8_fmt(scratch.arena, "Unable to resolve path '%S': %S", path, OS::error_text(err));
+                feed->queue_error(msg);
+                good = false;
+            }
+
+            if (good)
+            {
+                lst->base_dir = canon_path;
+                OS::DirIterResult item;
+                // Create a queue for recursive directories.
+                String8Node* head = Arena::push_array<String8Node>(arena, 1);
+                String8Node* free_lst = nullptr;
+                head->string = canon_path;
+                do
                 {
-                    String8Node* n = head;
-                    SLLStackPop(head);
-                    SLLStackPush(free_lst, n);
-                }
-                OS::DirIter os_itr = OS::open_dir_iter(dir, OS::DirIterFlags::FullPath);
-                // Do we have a good iterator?
-                if (os_itr != OS::DirIter::Sentinel)
-                {
-                    do
+                    String8 dir = head->string;
                     {
-                        if (not OS::dir_iter_next(scratch.arena, &item, os_itr))
-                            break;
-                        if (implies(item.props.props, OS::FileProperty::Directory))
+                        String8Node* n = head;
+                        SLLStackPop(head);
+                        SLLStackPush(free_lst, n);
+                    }
+                    OS::DirIter os_itr = OS::open_dir_iter(dir, OS::DirIterFlags::None);
+                    // Do we have a good iterator?
+                    if (os_itr != OS::DirIter::Sentinel)
+                    {
+                        do
                         {
-                            String8Node* next_dir = free_lst;
-                            if (next_dir != nullptr)
+                            if (not OS::dir_iter_next(scratch.arena, &item, os_itr))
+                                break;
+                            if (implies(item.props.props, OS::FileProperty::Directory))
                             {
-                                SLLStackPop(free_lst);
-                                zero_bytes(next_dir);
+                                String8Node* next_dir = free_lst;
+                                if (next_dir != nullptr)
+                                {
+                                    SLLStackPop(free_lst);
+                                    zero_bytes(next_dir);
+                                }
+                                else
+                                {
+                                    next_dir = Arena::push_array<String8Node>(scratch.arena, 1);
+                                }
+                                // Note: This string lives in the scratch arena with our stack nodes.
+                                next_dir->string = OS::combine_paths(scratch.arena, dir, item.path);
+                                SLLStackPush(head, next_dir);
                             }
+                            // Otherwise, regular file.
                             else
                             {
-                                next_dir = Arena::push_array<String8Node>(scratch.arena, 1);
+                                // Fake the relative path by providing the dir but chopping the base_dir.
+                                String8 rel_dir = str8_chop_prefix(dir, canon_path);
+                                item.path = OS::combine_paths(scratch.arena, rel_dir, item.path);
+                                insert_flat_dir_entry_sorted(arena, lst, item);
                             }
-                            // Note: This string lives in the scratch arena with our stack nodes.
-                            next_dir->string = item.path;
-                            SLLStackPush(head, next_dir);
-                        }
-                        // Otherwise, regular file.
-                        else
-                        {
-                            insert_flat_dir_entry_sorted(arena, lst, item);
-                        }
-                    } while (true);
-                    OS::close_dir_iter(os_itr);
-                }
-            } while (head != nullptr);
+                        } while (true);
+                        OS::close_dir_iter(os_itr);
+                    }
+                } while (head != nullptr);
+            }
             Arena::scratch_end(scratch);
         }
     } // namespace [anon]
@@ -222,7 +242,7 @@ namespace Diff
             not null_dir_panel(child);
             child = child->sib_next)
         {
-            Arena::release(child->dir_entries_arena);
+            release_diff_dir_list_view(child->view);
         }
         CmdBuffer::release_draw_list(panel->frame_lst);
         CmdBuffer::release_draw_list(panel->A.draw_lst);
@@ -250,7 +270,177 @@ namespace Diff
         panel->window->sync_config(panel->atlas);
     }
 
-    void try_dir_drop(DiffDirPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed)
+    void diff_dir_panel_dir_A(DiffDirPanel* panel, String8 path, Feed::MessageFeed* feed)
+    {
+        auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+        FlatDirEntryList dir_entries = {};
+        populate_flattend_dir_entries(scratch.arena, &dir_entries, path, feed);
+        diff_dir_list_view_populate_files(panel->A.view, dir_entries);
+        Arena::scratch_end(scratch);
+    }
+
+    void diff_dir_panel_dir_B(DiffDirPanel* panel, String8 path, Feed::MessageFeed* feed)
+    {
+        auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+        FlatDirEntryList dir_entries = {};
+        populate_flattend_dir_entries(scratch.arena, &dir_entries, path, feed);
+        diff_dir_list_view_populate_files(panel->B.view, dir_entries);
+        Arena::scratch_end(scratch);
+    }
+
+    void diff_dir_panel_apply_diff(DiffDirPanel* panel, Feed::MessageFeed* feed)
+    {
+        DirFileArray files_A = diff_dir_list_view_file_array(panel->A.view);
+        DirFileArray files_B = diff_dir_list_view_file_array(panel->B.view);
+        if (files_A.size == 0)
+        {
+            feed->queue_info("Please profide a directory for the left side comparison.");
+            return;
+        }
+
+        if (files_B.size == 0)
+        {
+            feed->queue_info("Please profide a directory for the right side comparison.");
+            return;
+        }
+        auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+        // Clear panel text file arenas.
+        Arena::clear(panel->A.text_file_arena);
+        Arena::clear(panel->B.text_file_arena);
+        uint64_t idx_A = 0;
+        uint64_t idx_B = 0;
+        // The lists to place our files.
+        MergedFileList dirs_A = {};
+        MergedFileList dirs_B = {};
+        while (idx_A < files_A.size and idx_B < files_B.size)
+        {
+            OS::DirIterResult* file_A = &files_A.array[idx_A];
+            OS::DirIterResult* file_B = &files_B.array[idx_B];
+            // We use the same comparison function as the one in 'insert_flat_dir_entry_sorted'.
+            uint64_t depth_A = depth_of_file(file_A->path);
+            uint64_t depth_B = depth_of_file(file_B->path);
+            int same = int(depth_A) - int(depth_B);
+            if (same == 0)
+            {
+                same = str8_compare(file_A->path, file_B->path);
+            }
+
+            // Just insert 1-1.
+            if (same == 0)
+            {
+                MergedFileNode* entries = Arena::push_array<MergedFileNode>(scratch.arena, 2);
+                entries[0].merged.file.path = file_A->path;
+                entries[1].merged.file.path = file_B->path;
+                entries[0].merged.type = EditType::Eq;
+                entries[1].merged.type = EditType::Eq;
+                SLLQueuePush(dirs_A.first, dirs_A.last, &entries[0]);
+                SLLQueuePush(dirs_B.first, dirs_B.last, &entries[1]);
+                ++dirs_A.count;
+                ++dirs_B.count;
+                // Move both iterators forward.
+                ++idx_A;
+                ++idx_B;
+            }
+            // The file entry for A has no entry in B.  We need to create a deletion
+            // in A and continue to create deletions until our comparison is no longer
+            // less-than.
+            else if (same < 0)
+            {
+                do
+                {
+                    MergedFileNode* entries = Arena::push_array<MergedFileNode>(scratch.arena, 2);
+                    entries[0].merged.file.path = file_A->path;
+                    entries[1].merged.file.path = str8_empty;
+                    entries[0].merged.type = EditType::Del;
+                    entries[1].merged.type = EditType::Invalid;
+                    SLLQueuePush(dirs_A.first, dirs_A.last, &entries[0]);
+                    SLLQueuePush(dirs_B.first, dirs_B.last, &entries[1]);
+                    ++dirs_A.count;
+                    ++dirs_B.count;
+
+                    // Setup for the next file.
+                    ++idx_A;
+                    if (idx_A < files_A.size)
+                    {
+                        file_A = &files_A.array[idx_A];
+                        depth_A = depth_of_file(file_A->path);
+                        same = int(depth_A) - int(depth_B);
+                        if (same == 0)
+                        {
+                            same = str8_compare(file_A->path, file_B->path);
+                        }
+                    }
+                } while (same < 0 and idx_A < files_A.size);
+            }
+            // The file entry for B has no entry in A.  We need to create an insertion
+            // in B and continue to create insertions until our comparison is no longer
+            // greater-than.
+            else
+            {
+                do
+                {
+                    MergedFileNode* entries = Arena::push_array<MergedFileNode>(scratch.arena, 2);
+                    entries[0].merged.file.path = str8_empty;
+                    entries[1].merged.file.path = file_B->path;
+                    entries[0].merged.type = EditType::Invalid;
+                    entries[1].merged.type = EditType::Ins;
+                    SLLQueuePush(dirs_A.first, dirs_A.last, &entries[0]);
+                    SLLQueuePush(dirs_B.first, dirs_B.last, &entries[1]);
+                    ++dirs_A.count;
+                    ++dirs_B.count;
+
+                    // Setup for the next file.
+                    ++idx_B;
+                    if (idx_B < files_B.size)
+                    {
+                        file_B = &files_B.array[idx_B];
+                        depth_B = depth_of_file(file_B->path);
+                        same = int(depth_A) - int(depth_B);
+                        if (same == 0)
+                        {
+                            same = str8_compare(file_A->path, file_B->path);
+                        }
+                    }
+                } while (same > 0 and idx_B < files_B.size);
+            }
+        }
+        // Cleanup remaining files from each bucket.
+        // Deletions.
+        for (;idx_A < files_A.size; ++idx_A)
+        {
+            OS::DirIterResult* file_A = &files_A.array[idx_A];
+            MergedFileNode* entries = Arena::push_array<MergedFileNode>(scratch.arena, 2);
+            entries[0].merged.file.path = file_A->path;
+            entries[1].merged.file.path = str8_empty;
+            entries[0].merged.type = EditType::Del;
+            entries[1].merged.type = EditType::Invalid;
+            SLLQueuePush(dirs_A.first, dirs_A.last, &entries[0]);
+            SLLQueuePush(dirs_B.first, dirs_B.last, &entries[1]);
+            ++dirs_A.count;
+            ++dirs_B.count;
+        }
+        // Insertions.
+        for (;idx_B < files_B.size; ++idx_B)
+        {
+            OS::DirIterResult* file_B = &files_B.array[idx_B];
+            MergedFileNode* entries = Arena::push_array<MergedFileNode>(scratch.arena, 2);
+            entries[0].merged.file.path = str8_empty;
+            entries[1].merged.file.path = file_B->path;
+            entries[0].merged.type = EditType::Invalid;
+            entries[1].merged.type = EditType::Ins;
+            SLLQueuePush(dirs_A.first, dirs_A.last, &entries[0]);
+            SLLQueuePush(dirs_B.first, dirs_B.last, &entries[1]);
+            ++dirs_A.count;
+            ++dirs_B.count;
+        }
+        assert(dirs_A.count == dirs_B.count);
+        // Populate.
+        diff_dir_list_view_populate_merged_files(panel->A.view, dirs_A);
+        diff_dir_list_view_populate_merged_files(panel->B.view, dirs_B);
+        Arena::scratch_end(scratch);
+    }
+
+    void diff_dir_panel_try_dir_drop(DiffDirPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed)
     {
         bool dir_evaluated = false;
         CmdBuffer::ClipRect clip = UI::convert(panel->window->content_viewport(panel->window->window_viewport()));
@@ -262,9 +452,14 @@ namespace Diff
             CmdBuffer::ClipRect child_clip = clip_from_parent(clip, &panel->A, child);
             if (mouse_in_clip(state->mouse.ui_mouse, child_clip))
             {
-                child->dir_entries = {};
-                Arena::clear(child->dir_entries_arena);
-                populate_flattend_dir_entries(child->dir_entries_arena, &child->dir_entries, path, feed);
+                dir_evaluated = true;
+                auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+                FlatDirEntryList dir_entries = {};
+                populate_flattend_dir_entries(scratch.arena, &dir_entries, path, feed);
+                diff_dir_list_view_populate_files(child->view, dir_entries);
+                Arena::scratch_end(scratch);
+                // Now try to apply diffs.
+                diff_dir_panel_apply_diff(panel, feed);
                 break;
             }
         }
@@ -443,6 +638,12 @@ namespace Diff
             }
         }
 
+        DiffDirListView* scroll_changed[] = {
+            nullptr,
+            nullptr
+        };
+        uint64_t scroll_idx = 0;
+
         // Build leaf-UI.
         for (PartitionDirPanel* child = &panel->A;
             not null_dir_panel(child);
@@ -459,24 +660,28 @@ namespace Diff
             CmdBuffer::push_color_palette(child->draw_lst, *CmdBuffer::current_palette(*core_lst));
 
             // Build core widget.
-            {
-                Glyph::RenderFontContext font_ctx = panel->atlas->render_font_context(font_size);
-                const int line_height = font_ctx.current_font_line_height();
-                Vec2f start_pos;
-                start_pos.y = static_cast<float>(rep(child_clip.height) - line_height);
-                CmdBuffer::start_glyph_run(child->draw_lst, Render::VertShader::OneOneTransform);
-                for EachNode(n, child->dir_entries.first)
-                {
-                    font_ctx.render_text(child->draw_lst, n->item.path, start_pos, colors.window_title_font_color);
-                    start_pos.y -= line_height;
-                }
-            }
+            auto r = build_diff_dir_list_view(child->view, child->draw_lst, state);
+            scroll_changed[scroll_idx++] = r.scroll_changed ? child->view : nullptr;
 
             CmdBuffer::pop_clip(child->draw_lst);
             CmdBuffer::pop_texture(child->draw_lst);
             CmdBuffer::pop_color_palette(child->draw_lst);
 
             CmdBuffer::push_draw_list(cmd_lst, CmdBuffer::DrawListLayer::_2, child->draw_lst);
+        }
+
+        for EachIndex(i, std::size(scroll_changed))
+        {
+            DiffDirListView* view = scroll_changed[i];
+            if (view != nullptr)
+            {
+                DiffDirListView* share_to = panel->A.view;
+                if (view == panel->A.view)
+                {
+                    share_to = panel->B.view;
+                }
+                diff_dir_list_view_share_scroll_pos(share_to, view);
+            }
         }
 
         panel->window->end(state);

@@ -125,12 +125,12 @@ namespace Diff
     }
 
     // Interaction.
-    void file_A(DiffPanel* panel, const TextFile& file)
+    void diff_panel_file_A(DiffPanel* panel, const TextFile& file)
     {
         diff_text_view_populate_text(panel->A.view, file);
     }
 
-    void file_B(DiffPanel* panel, const TextFile& file)
+    void diff_panel_file_B(DiffPanel* panel, const TextFile& file)
     {
         diff_text_view_populate_text(panel->B.view, file);
     }
@@ -608,7 +608,7 @@ namespace Diff
         }
     }
 
-    void apply_diff(DiffPanel* panel, Feed::MessageFeed* feed)
+    void diff_panel_apply_diff(DiffPanel* panel, Feed::MessageFeed* feed)
     {
         Timers::Stopwatch sw;
         sw.start();
@@ -809,13 +809,13 @@ namespace Diff
         diff_text_view_apply_context_window(panel->B.view);
     }
 
-    void sync_config(DiffPanel* panel, Feed::MessageFeed* feed)
+    void diff_panel_sync_config(DiffPanel* panel, Feed::MessageFeed* feed)
     {
         // If this was changed, we need to recompute everything.
         if (panel->word_based_diff != Config::diff_state().word_based_diff)
         {
             panel->word_based_diff = Config::diff_state().word_based_diff;
-            apply_diff(panel, feed);
+            diff_panel_apply_diff(panel, feed);
         }
         else
         {
@@ -824,7 +824,7 @@ namespace Diff
         }
     }
 
-    void try_file_drop(DiffPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed)
+    void diff_panel_try_file_drop(DiffPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed)
     {
         bool diff_applied = false;
         CmdBuffer::ClipRect clip = CmdBuffer::ClipRect::basic(CmdBuffer::screen(*panel->frame_lst));
@@ -840,7 +840,7 @@ namespace Diff
                 TextFile new_file = text_file_read(scratch.arena, path);
                 // Apply the text file.
                 diff_text_view_populate_text(child->view, new_file);
-                apply_diff(panel, feed);
+                diff_panel_apply_diff(panel, feed);
                 Arena::scratch_end(scratch);
                 diff_applied = true;
                 break;
@@ -1052,11 +1052,11 @@ namespace Diff
                                 Arena::Temp tmp = Arena::temp_begin(scratch.arena);
                                 TextFile new_B = text_file_copy_to(tmp.arena, *diff_text_view_text_file(panel->A.view));
                                 TextFile new_A = text_file_copy_to(tmp.arena, *diff_text_view_text_file(panel->B.view));
-                                file_A(panel, new_A);
-                                file_B(panel, new_B);
+                                diff_panel_file_A(panel, new_A);
+                                diff_panel_file_B(panel, new_B);
                                 // Free up the scratch arena so we can use it to populate diffs.
                                 Arena::temp_end(tmp);
-                                apply_diff(panel, feed);
+                                diff_panel_apply_diff(panel, feed);
                             }
                             break;
                         case PanelButtons::ToggleInnerDiffFormat:
