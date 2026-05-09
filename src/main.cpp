@@ -275,6 +275,13 @@ void build_diff_dir_panel(RenderCoreData* data)
     {
         clear_command_mode(data);
     }
+
+    if (resp.pop_to_diff)
+    {
+        Diff::DiffDirDiffResults results = diff_dir_panel_cached_diffs(data->diff_dir_panel, resp.diff_idx);
+        Diff::diff_panel_sink_cached_diffs(data->diff_panel, results);
+        clear_command_mode(data);
+    }
 }
 
 Vec2i ui_mouse_pos(const OS::Event& e, const ScreenDimensions& screen)
@@ -762,10 +769,10 @@ void render_core(RenderCoreData* data)
     // drawn on top of everything else.
     CmdBuffer::push_draw_list(data->cmd_lst, CmdBuffer::DrawListLayer::_0, data->core_draw_lst);
 
-    // The above is a bit of a lie.  We want to draw tooltips on top of everything.
+    // We want to draw tooltips on top of everything, so we push it to the top-most layer.
     if (data->ui_state->tooltip.enabled)
     {
-        CmdBuffer::push_draw_list(data->cmd_lst, CmdBuffer::DrawListLayer::_0, data->ui_state->tooltip.lst);
+        CmdBuffer::push_draw_list(data->cmd_lst, CmdBuffer::DrawListLayer::Top, data->ui_state->tooltip.lst);
     }
 
     CmdBuffer::pop_clip(data->core_draw_lst);

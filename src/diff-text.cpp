@@ -255,6 +255,11 @@ namespace Diff
         widget->scroll->scroll_to(off);
     }
 
+    void diff_text_view_reset_scroll_pos(DiffTextView* widget)
+    {
+        widget->scroll->scroll_to({});
+    }
+
     void diff_text_view_apply_context_window(DiffTextView* widget)
     {
         // Note: This is not the best way to do this.  Perhaps there's an alternative data structure
@@ -387,6 +392,24 @@ namespace Diff
         // Collapse the list into an array.
         widget->diffs = diff_text_view_join_merged_line_list(widget->ctx_diff_arena, trimmed_lines);
         Arena::scratch_end(scratch);
+    }
+
+    void diff_text_view_sink_cached_diffs(DiffTextView* widget, const TextFile& text, MergedDiffView diff_lines, MergedTextBlocks diff_text_blocks)
+    {
+        // Just copy everything.
+        diff_text_view_populate_text(widget, text);
+        // Note: the above already clears all our arenas.
+        // Lines.
+        widget->full_diffs.size = diff_lines.size;
+        widget->full_diffs.lines = Arena::push_array_no_zero<MergedLine>(widget->diff_arena, widget->full_diffs.size);
+        memcpy(widget->full_diffs.lines, diff_lines.lines, sizeof(MergedLine) * diff_lines.size);
+        // Wait until context window is applied.
+        widget->diffs = widget->full_diffs;
+        // Blocks.
+        widget->full_diff_blocks.size = diff_text_blocks.size;
+        widget->full_diff_blocks.blocks = Arena::push_array_no_zero<MergedText>(widget->fine_diff_arena, widget->full_diff_blocks.size);
+        memcpy(widget->full_diff_blocks.blocks, diff_text_blocks.blocks, sizeof(MergedText) * diff_text_blocks.size);
+        widget->diff_blocks = widget->full_diff_blocks;
     }
 
     // Helpers.

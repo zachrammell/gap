@@ -1,5 +1,7 @@
 #pragma once
 
+#include "diff-core.h"
+#include "diff-text.h"
 #include "feed.h"
 #include "glyph-cache.h"
 #include "types.h"
@@ -9,7 +11,9 @@ namespace Diff
 {
     struct DiffDirPanelResponse
     {
+        uint64_t diff_idx;
         bool close;
+        bool pop_to_diff;
     };
 
     struct DiffDirPanel;
@@ -27,6 +31,9 @@ namespace Diff
     void diff_dir_panel_dir_B(DiffDirPanel* panel, String8 path, Feed::MessageFeed* feed);
     void diff_dir_panel_apply_diff(DiffDirPanel* panel, Feed::MessageFeed* feed);
     void diff_dir_panel_try_dir_drop(DiffDirPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed);
+
+    // Queries.
+    DiffDirDiffResults diff_dir_panel_cached_diffs(DiffDirPanel* panel, uint64_t diff_idx);
 
     // Building.
     DiffDirPanelResponse build_diff_dir_panel(DiffDirPanel* panel,

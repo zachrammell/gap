@@ -1,7 +1,9 @@
 #include "diff-dir-list.h"
 
 #include "arena.h"
+#include "basic-box.h"
 #include "basic-scrollbox.h"
+#include "tooltips.h"
 
 namespace Diff
 {
@@ -9,9 +11,11 @@ namespace Diff
     {
         Arena::Arena* arena;
         Arena::Arena* merged_arena;
+        Arena::Arena* diff_counts_arena;
         Arena::Position base_pos;
         DirFileArray files;
         MergedFileArray merged_files;
+        DiffCountArray diff_counts_side;
         uint64_t longest_line;
         int64_t idx_page_jump;
         UI::Widgets::ID id;
@@ -29,6 +33,19 @@ namespace Diff
             size.v_size = widget->merged_files.size != 0 ? widget->merged_files.size : widget->files.size;
             size.entry_size.y = static_cast<float>(line_height);
             size.entry_size.x = glyph_width_est * widget->longest_line;
+
+            // If we have a sidebar for diff counts, we need to add that here.
+            if (widget->diff_counts_side.size != 0)
+            {
+                uint64_t num_ins_digits = digits(widget->diff_counts_side.largest_ins);
+                uint64_t num_del_digits = digits(widget->diff_counts_side.largest_del);
+                // The display is: +x -y
+                size.entry_size.x += glyph_width_est +                 // initial '+'.
+                                    glyph_width_est * num_ins_digits + // digits of ins.
+                                    glyph_width_est +                  // padding.
+                                    glyph_width_est +                  // initial '-'.
+                                    glyph_width_est * num_del_digits;  // digits of del.
+            }
             // One extra width for padding.
             size.entry_size.x += glyph_width_est;
 
@@ -43,6 +60,7 @@ namespace Diff
         DiffDirListView* widget = Arena::push_array<DiffDirListView>(arena, 1);
         widget->arena = arena;
         widget->merged_arena = Arena::alloc(Arena::default_params);
+        widget->diff_counts_arena = Arena::alloc(Arena::default_params);
         // We need to do gross C++ here.
         {
             uint8_t* blob = Arena::push_array_no_zero_aligned<uint8_t>(arena,
@@ -65,6 +83,7 @@ namespace Diff
         widget->scroll->~SBox();
 
         Arena::release(widget->merged_arena);
+        Arena::release(widget->diff_counts_arena);
         Arena::Arena* arena = widget->arena;
         Arena::release(arena);
     }
@@ -113,6 +132,16 @@ namespace Diff
         UI::Widgets::IndexedScrollContentSize size_target = widget->scroll->content_size();
         off.offset.x = std::min(off.offset.x, size_target.entry_size.x);
         widget->scroll->scroll_to(off);
+    }
+
+    void diff_dir_list_view_apply_diff_count_sidebar(DiffDirListView* widget, DiffCountArray counts)
+    {
+        assert(counts.size == widget->merged_files.size);
+        widget->diff_counts_side = {};
+        Arena::clear(widget->diff_counts_arena);
+        widget->diff_counts_side = counts;
+        widget->diff_counts_side.array = Arena::push_array_no_zero<DiffCount>(widget->diff_counts_arena, widget->diff_counts_side.size);
+        memcpy(widget->diff_counts_side.array, counts.array, sizeof(DiffCount) * counts.size);
     }
 
     // Queries.
@@ -257,7 +286,54 @@ namespace Diff
             };
             Vec4f color;
 
-            // First, go through and add the boxes.
+            // Render diff counts sidebar if available.
+            CmdBuffer::start_glyph_run(lst, Render::VertShader::OneOneTransform);
+            if (widget->diff_counts_side.size != 0)
+            {
+                // Will there ever be over 1T changes to a file?  I hope not...
+                constexpr char target_string[] = "+999999999999 -999999999999";
+                char fmt_buf[std::size(target_string)];
+                float largest_ins_col_skip = glyph_width_est +                                                // '-'.
+                                             digits(widget->diff_counts_side.largest_ins) * glyph_width_est + // num.
+                                             glyph_width_est;                                                 // padding.
+                uint64_t first_l = first;
+                uint64_t last_l = last;
+                Vec2f num_pos = start_pos;
+                // We don't offset these because they stick to the LHS.
+                num_pos.x = 0.f;
+                Vec2f pos;
+                for (; first_l <= last_l; ++first_l)
+                {
+                    DiffCount count = widget->diff_counts_side.array[first_l];
+                    String8 diff_txt;
+                    if (count.ins != 0)
+                    {
+                        diff_txt = fmt_string(fmt_buf, "+%I64d", count.ins);
+                        pos = num_pos;
+                        pos = font_ctx.render_text(lst, diff_txt, pos, colors.ins_txt);
+                    }
+
+                    if (count.del != 0)
+                    {
+                        diff_txt = fmt_string(fmt_buf, "-%I64d", count.del);
+                        pos.x = num_pos.x + largest_ins_col_skip;
+                        pos = font_ctx.render_text(lst, diff_txt, pos, colors.del_txt);
+                    }
+                    num_pos.y -= line_height;
+                }
+                // Finally, offset the start pos for the text blow.
+                // Replace the current clip so we can clip any text that tries to enter this region.
+                CmdBuffer::pop_clip(lst);
+                uint64_t max_digits_del = digits(widget->diff_counts_side.largest_del);
+                // +2 for '-' and padding.
+                int off_width = static_cast<int>(largest_ins_col_skip + (max_digits_del + 2) * glyph_width_est);
+                content_clip.offset_x = UI::offset_from(content_clip.offset_x, off_width);
+                content_clip.width = Width{ rep(content_clip.width) - off_width };
+                CmdBuffer::push_clip(lst, content_clip);
+            }
+
+            // Go through and add the boxes.
+            UI::Widgets::BuildBoxInput box_in = { };
             CmdBuffer::start_shapes(lst, Render::VertShader::OneOneTransform);
             Vec2f hl_pos = start_pos;
             // The line isn't going to be exactly centered without this slight offset.
@@ -273,8 +349,34 @@ namespace Diff
                 {
                     CmdBuffer::solid_rect(lst, Render::FragShader::BasicColor, hl_pos, size, color);
                 }
+                box_in.id = UI::Widgets::make_id_seed_idx(widget->id, hl_line);
+                box_in.pos = hl_pos;
+                box_in.size = size;
+                basic_box(lst, state, box_in, UI::Widgets::BuildBoxFlags::Clickable);
+                // Fill the box if hovered.
+                if (UI::empty_focus_widget(*state) and UI::hot_widget_set(*state, box_in.id))
+                {
+                    CmdBuffer::solid_rect(lst, Render::FragShader::BasicColor, hl_pos, size, Config::widget_colors().window_border);
+                    UI::change_cursor(state, CursorStyle::Select);
+                    if (not state->tooltip.enabled)
+                    {
+                        UI::Widgets::TextTooltipInput tip_in = {
+                            .text = sv_str8(str8_mut(str8_literal("Click to line entry to diff"))),
+                            .padding = 2.f,
+                            .screen_pos = state->mouse.ui_mouse
+                        };
+                        UI::Widgets::basic_text_tooltip(state, lst, &font_ctx, tip_in);
+                    }
+                }
+
+                if (UI::std_click_trigger(*state, box_in.id))
+                {
+                    resp.file_idx = hl_line;
+                    resp.pop_to_diff = true;
+                }
                 hl_pos.y -= line_height;
             }
+
             CmdBuffer::start_glyph_run(lst, Render::VertShader::OneOneTransform);
             for (; first <= last; ++first)
             {

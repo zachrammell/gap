@@ -41,6 +41,7 @@ namespace Diff
     void diff_panel_apply_diff(DiffPanel* panel, Feed::MessageFeed* feed);
     void diff_panel_sync_config(DiffPanel* panel, Feed::MessageFeed* feed);
     void diff_panel_try_file_drop(DiffPanel* panel, String8 path, UI::UIState* state, Feed::MessageFeed* feed);
+    void diff_panel_sink_cached_diffs(DiffPanel* panel, const DiffDirDiffResults& diffs);
 
     // Helpers.
     DiffFileForViewResult diff_panel_diff_files_for_view(Arena::Arena* arena, DiffFileForViewInput in);

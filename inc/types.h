@@ -164,6 +164,7 @@ namespace CmdBuffer
         _0,
         _1,
         _2,
+        Top = _2, // Top-most layer.
         Count
     };
 

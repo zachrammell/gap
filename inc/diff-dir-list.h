@@ -53,9 +53,25 @@ namespace Diff
         uint64_t size;
     };
 
+    struct DiffCount
+    {
+        uint64_t ins;
+        uint64_t del;
+    };
+
+    struct DiffCountArray
+    {
+        DiffCount* array;
+        uint64_t size;
+        uint64_t largest_ins;
+        uint64_t largest_del;
+    };
+
     struct DiffDirListViewResponse
     {
+        uint64_t file_idx;
         bool scroll_changed;
+        bool pop_to_diff;
     };
 
     struct DiffDirListView;
@@ -70,6 +86,7 @@ namespace Diff
     void diff_dir_list_view_populate_files(DiffDirListView* widget, FlatDirEntryList lst);
     void diff_dir_list_view_populate_merged_files(DiffDirListView* widget, MergedFileList lst);
     void diff_dir_list_view_share_scroll_pos(DiffDirListView* widget, const DiffDirListView* share_from);
+    void diff_dir_list_view_apply_diff_count_sidebar(DiffDirListView* widget, DiffCountArray counts);
 
     // Queries.
     DirFileArray diff_dir_list_view_file_array(DiffDirListView* widget);

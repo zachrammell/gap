@@ -680,6 +680,21 @@ namespace Diff
         }
     }
 
+    void diff_panel_sink_cached_diffs(DiffPanel* panel, const DiffDirDiffResults& diffs)
+    {
+        // Apply to each panel.
+        DiffTextView* view_A = panel->A.view;
+        DiffTextView* view_B = panel->B.view;
+        diff_text_view_sink_cached_diffs(view_A, *diffs.A.file, diffs.A.file_line_diffs, diffs.A.file_text_block_diffs);
+        diff_text_view_sink_cached_diffs(view_B, *diffs.B.file, diffs.B.file_line_diffs, diffs.B.file_text_block_diffs);
+        // Apply context window.
+        diff_text_view_apply_context_window(view_A);
+        diff_text_view_apply_context_window(view_B);
+        // Let's also reset the scroll position so the viewer can start at the top of the file.
+        diff_text_view_reset_scroll_pos(view_A);
+        diff_text_view_reset_scroll_pos(view_B);
+    }
+
     // Helpers.
     DiffFileForViewResult diff_panel_diff_files_for_view(Arena::Arena* arena, DiffFileForViewInput in)
     {
