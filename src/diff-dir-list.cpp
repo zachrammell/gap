@@ -163,7 +163,8 @@ namespace Diff
     // Building.
     DiffDirListViewResponse build_diff_dir_list_view(DiffDirListView* widget,
                                                         CmdBuffer::DrawList* lst,
-                                                        UI::UIState* state)
+                                                        UI::UIState* state,
+                                                        SelectedDiffFile sel)
     {
         DiffDirListViewResponse resp = {};
         CmdBuffer::ClipRect clip = CmdBuffer::current_clip(*lst);
@@ -379,6 +380,11 @@ namespace Diff
                 {
                     resp.file_idx = hl_line;
                     resp.pop_to_diff = true;
+                }
+                // Finally, if this is the selected diff, create a highlight rect for it.
+                if (hl_line == rep(sel))
+                {
+                    CmdBuffer::solid_rect(lst, Render::FragShader::BasicColor, hl_pos, size, colors.selected_dir_file);
                 }
                 hl_pos.y -= line_height;
             }

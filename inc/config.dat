@@ -21,6 +21,7 @@ DAT_CAT_START(DiffColors, diff_colors, "Diff", "diff.colors")
     DAT_COLOR(trimmed_text,               Vec4f, "Trimmed text color")
     DAT_COLOR(del_mark,                   Vec4f, "Deletion marker color")
     DAT_COLOR(ins_mark,                   Vec4f, "Insertion marker color")
+    DAT_COLOR(selected_dir_file,          Vec4f, "Selected dir diff color")
 DAT_CAT_END()
 
 DAT_CAT_START(DiffState, diff_state, "Diff", "diff.state")

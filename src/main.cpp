@@ -278,7 +278,7 @@ void build_diff_dir_panel(RenderCoreData* data)
 
     if (resp.pop_to_diff)
     {
-        Diff::DiffDirDiffResults results = diff_dir_panel_cached_diffs(data->diff_dir_panel, resp.diff_idx);
+        Diff::DiffDirDiffResults results = Diff::diff_dir_panel_cached_diffs(data->diff_dir_panel, resp.diff_idx);
         Diff::diff_panel_sink_cached_diffs(data->diff_panel, results);
         clear_command_mode(data);
     }
@@ -1237,6 +1237,27 @@ void process_global_events(RenderCoreData* data)
     {
         change_mode(data->cmd_mode, CommandMode::DiffDirPanel);
         Diff::diff_dir_panel_start(data->diff_dir_panel, *data->screen, data->ui_state);
+        // Emit some helpful navigation info.
+        {
+            auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+            String8 msg = str8_fmt(scratch.arena, "%S to navigate to next diff.", Hotkeys::hotkey_as_string(scratch.arena, Hotkey::GLB_OpenDiffDirNext));
+            data->feed->queue_info(msg);
+            msg = str8_fmt(scratch.arena, "%S to navigate to previous diff.", Hotkeys::hotkey_as_string(scratch.arena, Hotkey::GLB_OpenDiffDirPrev));
+            data->feed->queue_info(msg);
+            Arena::scratch_end(scratch);
+        }
+    }
+
+    if (hotkey(*state, Hotkey::GLB_OpenDiffDirNext)
+        or hotkey(*state, Hotkey::GLB_OpenDiffDirPrev))
+    {
+        Diff::NextDiffOrder order = hotkey(*state, Hotkey::GLB_OpenDiffDirNext) ? Diff::NextDiffOrder::Next : Diff::NextDiffOrder::Previous;
+        if (Diff::diff_dir_panel_nav_diff(data->diff_dir_panel, order, data->feed))
+        {
+            uint64_t idx = Diff::diff_dir_panel_selected_diff(data->diff_dir_panel);
+            Diff::DiffDirDiffResults results = Diff::diff_dir_panel_cached_diffs(data->diff_dir_panel, idx);
+            Diff::diff_panel_sink_cached_diffs(data->diff_panel, results);
+        }
     }
 
     // An additional way to increase the font size is to wheel the mouse.

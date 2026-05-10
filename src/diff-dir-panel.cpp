@@ -218,6 +218,7 @@ namespace Diff
         PartitionDirPanel A;
         PartitionDirPanel B;
         DiffDirDiffCache diff_cache;
+        SelectedDiffFile selected_file;
         DiffDirPanelUIData ui_data;
         bool word_based_diff;
     };
@@ -232,6 +233,7 @@ namespace Diff
         panel->atlas = atlas;
         panel->frame_lst = CmdBuffer::alloc_draw_list();
         panel->id = UI::Widgets::ID::DiffDirPanel;
+        panel->selected_file = SelectedDiffFile::Sentinel;
         {
             uint8_t* blob = Arena::push_array_no_zero_aligned<uint8_t>(arena,
                                                                         sizeof(UI::Widgets::BasicWindow),
@@ -322,6 +324,8 @@ namespace Diff
             return;
         }
         auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+        // Reset the selection.
+        panel->selected_file = SelectedDiffFile::Sentinel;
         // Clear panel text file arenas.
         Arena::clear(panel->A.text_file_arena);
         Arena::clear(panel->B.text_file_arena);
@@ -558,6 +562,38 @@ namespace Diff
         }
     }
 
+    bool diff_dir_panel_nav_diff(DiffDirPanel* panel, NextDiffOrder order, Feed::MessageFeed* feed)
+    {
+        if (panel->diff_cache.size == 0)
+        {
+            feed->queue_info("No files in directory to navigate to.");
+            return false;
+        }
+
+        SelectedDiffFile next_sel = SelectedDiffFile::Sentinel;
+        switch (order)
+        {
+        case NextDiffOrder::Next:
+            next_sel = SelectedDiffFile{ (rep(panel->selected_file) + 1) % panel->diff_cache.size };
+            if (next_sel < panel->selected_file)
+            {
+                feed->queue_info("Back to first diff.");
+            }
+            break;
+        case NextDiffOrder::Previous:
+            next_sel = SelectedDiffFile{ (rep(panel->selected_file) + panel->diff_cache.size - 1) % panel->diff_cache.size };
+            if (next_sel > panel->selected_file)
+            {
+                feed->queue_info("Back to last diff.");
+            }
+            break;
+        }
+        panel->selected_file = next_sel;
+        return panel->selected_file != SelectedDiffFile::Sentinel;
+    }
+
+    void diff_dir_panel_prev_diff(DiffDirPanel* panel, Feed::MessageFeed* feed);
+
     // Queries.
     DiffDirDiffResults diff_dir_panel_cached_diffs(DiffDirPanel* panel, uint64_t diff_idx)
     {
@@ -575,6 +611,11 @@ namespace Diff
         result.A.file_text_block_diffs = panel->diff_cache.file_text_block_diffs[0][diff_idx];
         result.B.file_text_block_diffs = panel->diff_cache.file_text_block_diffs[1][diff_idx];
         return result;
+    }
+
+    uint64_t diff_dir_panel_selected_diff(DiffDirPanel* panel)
+    {
+        return rep(panel->selected_file);
     }
 
     // Building.
@@ -763,12 +804,13 @@ namespace Diff
             CmdBuffer::push_color_palette(child->draw_lst, *CmdBuffer::current_palette(*core_lst));
 
             // Build core widget.
-            auto r = build_diff_dir_list_view(child->view, child->draw_lst, state);
+            auto r = build_diff_dir_list_view(child->view, child->draw_lst, state, panel->selected_file);
             scroll_changed[scroll_idx++] = r.scroll_changed ? child->view : nullptr;
             if (r.pop_to_diff)
             {
                 resp.pop_to_diff = true;
                 resp.diff_idx = r.file_idx;
+                panel->selected_file = SelectedDiffFile{ r.file_idx };
             }
 
             CmdBuffer::pop_clip(child->draw_lst);

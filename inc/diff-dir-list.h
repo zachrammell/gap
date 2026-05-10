@@ -74,6 +74,11 @@ namespace Diff
         bool pop_to_diff;
     };
 
+    enum class SelectedDiffFile : uint64_t
+    {
+        Sentinel = sentinel_for<SelectedDiffFile>
+    };
+
     struct DiffDirListView;
 
     // Creation.
@@ -96,5 +101,6 @@ namespace Diff
     // Building.
     DiffDirListViewResponse build_diff_dir_list_view(DiffDirListView* widget,
                                                         CmdBuffer::DrawList* lst,
-                                                        UI::UIState* state);
+                                                        UI::UIState* state,
+                                                        SelectedDiffFile sel);
 } // namespace Diff
