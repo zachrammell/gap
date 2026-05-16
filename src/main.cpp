@@ -747,16 +747,6 @@ void render_core(RenderCoreData* data)
         }
     }
 
-    {
-        Vec2f mid_scr = { rep(screen.width) / 2.f, rep(screen.height) / 2.f };
-        static float period = 0.f;
-        period += data->ui_state->anim_fast_rate * .05f;
-        const Glyph::FontSize font_size = Glyph::FontSize{ Config::diff_state().diff_font_size };
-        auto font_ctx = data->atlas->render_font_context(font_size);
-        CmdBuffer::start_glyph_run(data->core_draw_lst, Render::VertShader::OneOneTransform);
-        font_ctx.render_icon_glyph_no_offsets_rotation(data->core_draw_lst, Glyph::SpecialGlyph::Reset, -period, mid_scr, Config::widget_colors().active_button);
-    }
-
     if (implies(data->ui_state->special, SpecialModes::ShowGlyphs))
     {
         CmdBuffer::start_images(data->core_draw_lst, Render::VertShader::NoTransform);
@@ -1700,6 +1690,9 @@ int gap_main_entry(int argc, char** argv)
     }
 
     OS::destroy_window(window);
+
+    // Terminate outstanding jobs.
+    Diff::diff_dir_panel_terminate_jobs(diff_dir_panel);
 
     thread_pool.shutdown();
 

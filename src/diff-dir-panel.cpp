@@ -270,7 +270,6 @@ namespace Diff
         UI::Widgets::BasicWindow* window;
         PartitionDirPanel A;
         PartitionDirPanel B;
-        DiffDirDiffCache diff_cache;
         SelectedDiffFile selected_file;
         DiffDirThreadData* thread_data;
         DiffDirThreadData* free_thread_lst;
@@ -302,10 +301,8 @@ namespace Diff
                 // Allocate pools based on thread concurrency.
                 Thread::ThreadPool* pool = Thread::system_thread_pool();
                 result->size = pool->thread_count();
-                Arena::Arena* first_arena = Arena::alloc(Arena::default_params);
-                result->arenas = Arena::push_array<Arena::Arena*>(first_arena, result->size);
-                result->arenas[0] = first_arena;
-                for (uint64_t i = 1; i < result->size; ++i)
+                result->arenas = Arena::push_array<Arena::Arena*>(panel->arena, result->size);
+                for EachIndex(i, result->size)
                 {
                     result->arenas[i] = Arena::alloc(Arena::default_params);
                 }
@@ -460,7 +457,6 @@ namespace Diff
 
             // Create diff cache.
             td->diff_cache = {};
-            Arena::clear(arena);
             td->diff_cache.size = td->files_A.size;
             td->diff_cache.file_line_diffs[0] = Arena::push_array<MergedDiffView>(arena, td->diff_cache.size);
             td->diff_cache.file_line_diffs[1] = Arena::push_array<MergedDiffView>(arena, td->diff_cache.size);
@@ -499,6 +495,7 @@ namespace Diff
                 td->diff_chunks[i].slice_count = diff_chunk_size;
                 td->diff_chunks[i].largest_ins = 0;
                 td->diff_chunks[i].largest_del = 0;
+                td->diff_chunks[i].word_based_diff = panel->word_based_diff;
             }
             // Add leftovers.
             td->diff_chunks[td->size - 1].slice_count += diff_chunk_leftover;
@@ -762,69 +759,19 @@ namespace Diff
         Arena::scratch_end(scratch);
 
         // Phase 2: compute all diffs between corresponding files.
-        sw.start();
-        panel->diff_cache = {};
-        Arena::clear(panel->text_diffs_arena);
-        panel->diff_cache.size = dirs_A.count;
-        panel->diff_cache.file_line_diffs[0] = Arena::push_array<MergedDiffView>(panel->text_diffs_arena, panel->diff_cache.size);
-        panel->diff_cache.file_line_diffs[1] = Arena::push_array<MergedDiffView>(panel->text_diffs_arena, panel->diff_cache.size);
-        panel->diff_cache.file_text_block_diffs[0] = Arena::push_array<MergedTextBlocks>(panel->text_diffs_arena, panel->diff_cache.size);
-        panel->diff_cache.file_text_block_diffs[1] = Arena::push_array<MergedTextBlocks>(panel->text_diffs_arena, panel->diff_cache.size);
-        MergedFileArray merged_files_A = diff_dir_list_view_merged_file_array(panel->A.view);
-        MergedFileArray merged_files_B = diff_dir_list_view_merged_file_array(panel->B.view);
         scratch = Arena::scratch_begin(Arena::no_conflicts);
-        // Allocate the sidebar diff counts.
+        // Set up the threaded diffs.
+        diff_dir_panel_diff_files_threaded(panel);
+        // Populate sentinel diff values to the view sidebar (this is used to drive whether a diff is ready to view).
         DiffCountArray diff_counts = {};
-        diff_counts.size = merged_files_A.size;
-        diff_counts.array = Arena::push_array<DiffCount>(scratch.arena, diff_counts.size);
-        Arena::Position scratch_pop_pos = Arena::pos(scratch.arena);
-        for EachIndex(i, merged_files_A.size)
+        diff_counts.size = dirs_A.count;
+        diff_counts.array = Arena::push_array_no_zero<DiffCount>(scratch.arena, diff_counts.size);
+        for EachIndex(i, diff_counts.size)
         {
-            // Step 1: we need to read the file and populate the text because up until this point,
-            // we haven't hit the disk for file content.
-            MergedFile* file_A = &merged_files_A.array[i];
-            MergedFile* file_B = &merged_files_B.array[i];
-            if (file_A->file.path.size != 0)
-            {
-                file_A->file = text_file_read(panel->A.text_file_arena, file_A->file.path);
-            }
-
-            if (file_B->file.path.size != 0)
-            {
-                file_B->file = text_file_read(panel->B.text_file_arena, file_B->file.path);
-            }
-
-            DiffFileForViewInput in = {
-                .A = &file_A->file,
-                .B = &file_B->file,
-                .word_based_diff = panel->word_based_diff,
-            };
-            DiffFileForViewResult result = diff_panel_diff_files_for_view(scratch.arena, in);
-            // Cache it.
-            panel->diff_cache.file_line_diffs[0][i] = diff_text_view_join_merged_line_list(panel->text_diffs_arena, result.lst_A);
-            panel->diff_cache.file_line_diffs[1][i] = diff_text_view_join_merged_line_list(panel->text_diffs_arena, result.lst_B);
-            panel->diff_cache.file_text_block_diffs[0][i] = diff_text_view_join_merged_text_blocks_list(panel->text_diffs_arena, result.merged_txt_A, file_A->file);
-            panel->diff_cache.file_text_block_diffs[1][i] = diff_text_view_join_merged_text_blocks_list(panel->text_diffs_arena, result.merged_txt_B, file_B->file);
-            // Sum diffs.
-            for EachIndex(j, panel->diff_cache.file_line_diffs[0][i].size)
-            {
-                MergedLine* line_A = &panel->diff_cache.file_line_diffs[0][i].lines[j];
-                MergedLine* line_B = &panel->diff_cache.file_line_diffs[1][i].lines[j];
-                diff_counts.array[i].ins += line_B->type == EditType::Ins;
-                diff_counts.array[i].del += line_A->type == EditType::Del;
-            }
-            // Max diffs.
-            diff_counts.largest_ins = std::max(diff_counts.largest_ins, diff_counts.array[i].ins);
-            diff_counts.largest_del = std::max(diff_counts.largest_del, diff_counts.array[i].del);
-            // Clear scratch so we can start again at the beginning of the loop.
-            Arena::pop_to(scratch.arena, scratch_pop_pos);
+            diff_counts.array[i] = diff_count_sentinel;
         }
         // Populate the diff counts, but only to A.
         diff_dir_list_view_apply_diff_count_sidebar(panel->A.view, diff_counts);
-
-        sw.stop();
-        msg = str8_fmt(scratch.arena, "File diffs computed in %ums", sw.to_ms());
-        feed->queue_info(msg);
         Arena::scratch_end(scratch);
     }
 
@@ -860,24 +807,26 @@ namespace Diff
 
     bool diff_dir_panel_nav_diff(DiffDirPanel* panel, NextDiffOrder order, Feed::MessageFeed* feed)
     {
-        if (panel->diff_cache.size == 0)
+        if (panel->thread_data == nullptr
+            or panel->thread_data->diff_cache.size == 0)
         {
             feed->queue_info("No files in directory to navigate to.");
             return false;
         }
+        uint64_t diff_cache_size = panel->thread_data->diff_cache.size;
 
         SelectedDiffFile next_sel = SelectedDiffFile::Sentinel;
         switch (order)
         {
         case NextDiffOrder::Next:
-            next_sel = SelectedDiffFile{ (rep(panel->selected_file) + 1) % panel->diff_cache.size };
+            next_sel = SelectedDiffFile{ (rep(panel->selected_file) + 1) % diff_cache_size };
             if (next_sel < panel->selected_file)
             {
                 feed->queue_info("Back to first diff.");
             }
             break;
         case NextDiffOrder::Previous:
-            next_sel = SelectedDiffFile{ (rep(panel->selected_file) + panel->diff_cache.size - 1) % panel->diff_cache.size };
+            next_sel = SelectedDiffFile{ (rep(panel->selected_file) + diff_cache_size - 1) % diff_cache_size };
             if (next_sel > panel->selected_file)
             {
                 feed->queue_info("Back to last diff.");
@@ -885,7 +834,12 @@ namespace Diff
             break;
         }
         panel->selected_file = next_sel;
-        return panel->selected_file != SelectedDiffFile::Sentinel;
+        bool good = panel->selected_file != SelectedDiffFile::Sentinel;
+        if (good)
+        {
+            good = diff_dir_list_valid_diff(panel->A.view, rep(panel->selected_file));
+        }
+        return good;
     }
 
     void diff_dir_panel_sync_thread_data(DiffDirPanel* panel, Feed::MessageFeed* feed)
@@ -906,6 +860,7 @@ namespace Diff
             Thread::TaskResult result = pool->result_if_complete(async_work);
             if (result.task_data)
             {
+                if (Config::system_core().noisy_diff_timing)
                 {
                     char fmt_buf[100];
                     String8 msg = fmt_string(fmt_buf, "Thread[%I64d] computed diffs in %I64dms.", i, rep(result.ms));
@@ -954,6 +909,7 @@ namespace Diff
             char fmt_buf[100];
             String8 msg = fmt_string(fmt_buf, "Diffs completed in %I64dms.", panel->thread_data->sw.to_ms());
             feed->queue_info(msg);
+            panel->thread_data->state = DiffDirThreadState::Computed;
 #if BUILD_DEBUG
             // Verify we actually pulled everything.
             for EachIndex(i, panel->thread_data->size)
@@ -969,22 +925,33 @@ namespace Diff
         }
     }
 
+    void diff_dir_panel_terminate_jobs(DiffDirPanel* panel)
+    {
+        if (panel->thread_data != nullptr)
+        {
+            diff_dir_panel_cancel_thread_data(panel, panel->thread_data);
+        }
+    }
+
     // Queries.
     DiffDirDiffResults diff_dir_panel_cached_diffs(DiffDirPanel* panel, uint64_t diff_idx)
     {
         DiffDirDiffResults result = {};
-        if (diff_idx >= panel->diff_cache.size)
+        if (panel->thread_data == nullptr)
             return result;
-        MergedFileArray files_A = diff_dir_list_view_merged_file_array(panel->A.view);
-        MergedFileArray files_B = diff_dir_list_view_merged_file_array(panel->B.view);
+        if (diff_idx >= panel->thread_data->diff_cache.size)
+            return result;
+        assert(diff_dir_list_valid_diff(panel->A.view, diff_idx));
+        DiffDirFiles files_A = panel->thread_data->files_A;
+        DiffDirFiles files_B = panel->thread_data->files_B;
         if (diff_idx >= files_A.size or diff_idx >= files_B.size)
             return result;
-        result.A.file = &files_A.array[diff_idx].file;
-        result.B.file = &files_B.array[diff_idx].file;
-        result.A.file_line_diffs = panel->diff_cache.file_line_diffs[0][diff_idx];
-        result.B.file_line_diffs = panel->diff_cache.file_line_diffs[1][diff_idx];
-        result.A.file_text_block_diffs = panel->diff_cache.file_text_block_diffs[0][diff_idx];
-        result.B.file_text_block_diffs = panel->diff_cache.file_text_block_diffs[1][diff_idx];
+        result.A.file = &files_A.files[diff_idx];
+        result.B.file = &files_B.files[diff_idx];
+        result.A.file_line_diffs = panel->thread_data->diff_cache.file_line_diffs[0][diff_idx];
+        result.B.file_line_diffs = panel->thread_data->diff_cache.file_line_diffs[1][diff_idx];
+        result.A.file_text_block_diffs = panel->thread_data->diff_cache.file_text_block_diffs[0][diff_idx];
+        result.B.file_text_block_diffs = panel->thread_data->diff_cache.file_text_block_diffs[1][diff_idx];
         return result;
     }
 
@@ -1184,7 +1151,7 @@ namespace Diff
             if (r.pop_to_diff)
             {
                 // Validate that the diff is actually computed.
-                if (diff_dir_list_valid_diff(panel->A.view, resp.diff_idx))
+                if (diff_dir_list_valid_diff(panel->A.view, r.file_idx))
                 {
                     resp.pop_to_diff = true;
                     resp.diff_idx = r.file_idx;
