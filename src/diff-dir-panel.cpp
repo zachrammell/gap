@@ -87,7 +87,8 @@ namespace Diff
             DiffDirThreadChunk* diff_chunks;
             DiffCountArray computed_diff_counts; // Completion markers.
             DiffDirDiffCache diff_cache;
-            uint64_t size;
+            uint64_t size; // Size for the current run (to keep all threads busy).
+            uint64_t alloc_size;
             DiffDirFiles files_A;
             DiffDirFiles files_B;
             Thread::TaskHandle* async_tasks;
@@ -300,8 +301,9 @@ namespace Diff
                 result = Arena::push_array<DiffDirThreadData>(panel->arena, 1);
                 // Allocate pools based on thread concurrency.
                 Thread::ThreadPool* pool = Thread::system_thread_pool();
-                result->size = pool->thread_count();
-                result->arenas = Arena::push_array<Arena::Arena*>(panel->arena, result->size);
+                result->alloc_size = pool->thread_count();
+                result->size = result->alloc_size;
+                result->arenas = Arena::push_array<Arena::Arena*>(panel->arena, result->alloc_size);
                 for EachIndex(i, result->size)
                 {
                     result->arenas[i] = Arena::alloc(Arena::default_params);
@@ -357,6 +359,35 @@ namespace Diff
             }
         }
 
+        bool file_is_text_ish(String8 content)
+        {
+            bool text_ish = true;
+            // Our strategy here is to walk 1KB worth of text and see if it contains valid UTF8.
+            UTF8::CodepointWalker walker{ sv_str8(content) };
+            // Let's walk 254 codepoints.  This _should_ be enough, and is close to the optimal 256
+            // possible codepoints in 1KB of text.
+            uint64_t len = content.size < 254 ? content.size : 254;
+            for EachIndex(i, len)
+            {
+                if (walker.exhausted())
+                    break;
+                auto cpr = walker.next_result();
+                if (cpr == UTF8::invalid)
+                {
+                    text_ish = false;
+                    break;
+                }
+
+                // Do not allow embedded nulls beyond the possible BOM.
+                if (i > 8 and cpr.codepoint == 0)
+                {
+                    text_ish = false;
+                    break;
+                }
+            }
+            return text_ish;
+        }
+
         void diff_dir_panel_thread_work(Thread::ThreadWorkData* td)
         {
             DiffDirThreadChunk* td_chunk = static_cast<DiffDirThreadChunk*>(td->data);
@@ -381,7 +412,15 @@ namespace Diff
                     .B = file_B,
                     .word_based_diff = td_chunk->word_based_diff,
                 };
-                DiffFileForViewResult result = diff_panel_diff_files_for_view(tmp.arena, in);
+                DiffFileForViewResult result = {};
+                if (file_is_text_ish(file_A->content))
+                {
+                    result = diff_panel_diff_files_for_view(tmp.arena, in);
+                }
+                else
+                {
+                    result = diff_panel_diff_files_for_view_lines_only(tmp.arena, in);
+                }
                 // Cache it.
                 td_chunk->diff_lines_slice[0][i] = diff_text_view_join_merged_line_list(td_chunk->arena, result.lst_A);
                 td_chunk->diff_lines_slice[1][i] = diff_text_view_join_merged_line_list(td_chunk->arena, result.lst_B);
@@ -436,6 +475,9 @@ namespace Diff
 
             DiffDirThreadData* td = panel->thread_data;
 
+            // Reset our size to the allocation size.
+            td->size = td->alloc_size;
+
             // Begin our timer.
             td->sw.start();
 
@@ -455,6 +497,20 @@ namespace Diff
             // Populate text files.
             diff_dir_panel_populate_thread_data_text_file_paths(arena, panel, td);
 
+            // Now we can figure out how distribution is going to work.
+            // Set up chunks.
+            uint64_t diff_chunk_size = td->files_A.size / td->size;
+            // Implies we have fewer files than threads.
+            if (diff_chunk_size == 0)
+            {
+                diff_chunk_size = 1;
+                td->size = td->files_A.size;
+            }
+
+            // Note: This must account for leftovers.
+            uint64_t mod_val = std::max(diff_chunk_size, td->size);
+            uint64_t diff_chunk_leftover = td->files_A.size % mod_val;
+
             // Create diff cache.
             td->diff_cache = {};
             td->diff_cache.size = td->files_A.size;
@@ -462,13 +518,6 @@ namespace Diff
             td->diff_cache.file_line_diffs[1] = Arena::push_array<MergedDiffView>(arena, td->diff_cache.size);
             td->diff_cache.file_text_block_diffs[0] = Arena::push_array<MergedTextBlocks>(arena, td->diff_cache.size);
             td->diff_cache.file_text_block_diffs[1] = Arena::push_array<MergedTextBlocks>(arena, td->diff_cache.size);
-
-            // Set up chunks.
-            uint64_t diff_chunk_size = td->files_A.size / td->size;
-
-            // Note: This must account for leftovers.
-            uint64_t mod_val = std::max(diff_chunk_size, td->size);
-            uint64_t diff_chunk_leftover = td->files_A.size % mod_val;
 
             // Create output queues.
             uint64_t thread_ccq_size = diff_chunk_size + diff_chunk_leftover;
