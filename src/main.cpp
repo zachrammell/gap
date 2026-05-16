@@ -647,7 +647,6 @@ void process_window_state(OS::OSWindow wind)
 
     if (changed)
     {
-        Feed::global_feed()->queue_info("updated");
         Config::update(sys_core);
     }
 }
@@ -1656,6 +1655,9 @@ int gap_main_entry(int argc, char** argv)
         if (Render::frames_remaining() <= 0)
             continue;
 
+        // Sync thread data.
+        Diff::diff_dir_panel_sync_thread_data(diff_dir_panel, &message_feed);
+
         // Core rendering.
         {
             render_core(&render_core_data);
@@ -1688,6 +1690,9 @@ int gap_main_entry(int argc, char** argv)
     }
 
     OS::destroy_window(window);
+
+    // Terminate outstanding jobs.
+    Diff::diff_dir_panel_terminate_jobs(diff_dir_panel);
 
     thread_pool.shutdown();
 

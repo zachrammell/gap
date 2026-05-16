@@ -45,6 +45,7 @@ namespace Diff
 
     // Helpers.
     DiffFileForViewResult diff_panel_diff_files_for_view(Arena::Arena* arena, DiffFileForViewInput in);
+    DiffFileForViewResult diff_panel_diff_files_for_view_lines_only(Arena::Arena* arena, DiffFileForViewInput in);
 
     // Building.
     DiffPanelResponse build_diff_panel(DiffPanel* panel,

@@ -889,6 +889,162 @@ namespace Diff
         };
     }
 
+    DiffFileForViewResult diff_panel_diff_files_for_view_lines_only(Arena::Arena* arena, DiffFileForViewInput in)
+    {
+        EditList edits = diff_file_lines(arena, *in.A, *in.B);
+        // What we want is a sequence of 'lines' for both A and B which
+        // represent the 'merged' files together.  We will merge deletes
+        // and inserts and create 'gap' lines which will be rendered as
+        // an empty region in the text view.
+        MergedLineList lst_A = {};
+        MergedLineList lst_B = {};
+        MergedLineList lst_merge_B = {}; // This is to have as a write-back for the B list.
+        for EachNode(e, edits.first)
+        {
+            switch (e->edit.type)
+            {
+            case EditType::Del:
+                {
+                    // Add delete from A.
+                    LineRange rng_a = text_file_line_range(*in.A, CursorLine(e->edit.idx_a));
+                    MergedLine line_a = {
+                        .first = rng_a.first,
+                        .last = rng_a.last,
+                        .v_line = lst_A.count,
+                        .line = CursorLine(e->edit.idx_a),
+                        .type = EditType::Del,
+                    };
+                    diff_text_view_push_merge_line(arena, &lst_A, line_a);
+                    MergedLine line_b = {
+                        .first = CharOffset::Sentinel,
+                        .last = CharOffset::Sentinel,
+                        .v_line = lst_B.count,
+                        .line = CursorLine::Beginning,
+                        .type = EditType::Invalid,
+                    };
+                    diff_text_view_push_merge_line(arena, &lst_merge_B, line_b);
+                }
+                break;
+            case EditType::Ins:
+                {
+                    // Add insert from B.
+                    LineRange rng_b = text_file_line_range(*in.B, CursorLine(e->edit.idx_b));
+                    MergedLine line_b = {
+                        .first = rng_b.first,
+                        .last = rng_b.last,
+                        .v_line = lst_B.count,
+                        .line = CursorLine(e->edit.idx_b),
+                        .type = EditType::Ins,
+                    };
+                    // Try to pull from the merged list.  If we have one, we don't need to add
+                    // a sentinel to the A side.
+                    MergedLineNode* node = lst_merge_B.first;
+                    if (node == nullptr)
+                    {
+                        node = diff_text_view_push_merge_line(arena, &lst_B, line_b);
+                        MergedLine line_a = {
+                            .first = CharOffset::Sentinel,
+                            .last = CharOffset::Sentinel,
+                            .v_line = lst_A.count,
+                            .line = CursorLine::Beginning,
+                            .type = EditType::Invalid,
+                        };
+                        diff_text_view_push_merge_line(arena, &lst_A, line_a);
+                    }
+                    // We already have an entry for A.
+                    else
+                    {
+                        node->line = line_b;
+                        SLLQueuePop(lst_merge_B.first, lst_merge_B.last);
+                        node->next = nullptr;
+                        --lst_merge_B.count;
+                        SLLQueuePush(lst_B.first, lst_B.last, node);
+                        ++lst_B.count;
+                    }
+                }
+                break;
+            case EditType::Eq:
+                {
+                    // If there are any entries on the merge list, we need to add them now as gap entries.
+                    MergedLineNode* node = lst_merge_B.first;
+                    while (node != nullptr)
+                    {
+                        // Add gap from B.
+                        MergedLine line_b = {
+                            .first = CharOffset::Sentinel,
+                            .last = CharOffset::Sentinel,
+                            .v_line = lst_B.count,
+                            .line = CursorLine::Beginning,
+                            .type = EditType::Invalid,
+                        };
+                        // Insert B.
+                        node->line = line_b;
+                        SLLQueuePop(lst_merge_B.first, lst_merge_B.last);
+                        node->next = nullptr;
+                        --lst_merge_B.count;
+                        SLLQueuePush(lst_B.first, lst_B.last, node);
+                        ++lst_B.count;
+
+                        // Move node forward.
+                        node = lst_merge_B.first;
+                    }
+                    // Insert on both sides.
+                    LineRange rng_b = text_file_line_range(*in.B, CursorLine(e->edit.idx_b));
+                    LineRange rng_a = text_file_line_range(*in.A, CursorLine(e->edit.idx_a));
+                    MergedLine line_a = {
+                        .first = rng_a.first,
+                        .last = rng_a.last,
+                        .v_line = lst_A.count,
+                        .line = CursorLine(e->edit.idx_a),
+                        .type = EditType::Eq,
+                    };
+                    MergedLine line_b = {
+                        .first = rng_b.first,
+                        .last = rng_b.last,
+                        .v_line = lst_B.count,
+                        .line = CursorLine(e->edit.idx_b),
+                        .type = EditType::Eq,
+                    };
+                    diff_text_view_push_merge_line(arena, &lst_A, line_a);
+                    diff_text_view_push_merge_line(arena, &lst_B, line_b);
+                    assert(lst_A.count == lst_B.count);
+                }
+                break;
+            case EditType::Invalid:
+                break;
+            }
+        }
+        // If there are any remaining entries on the merge list, we need to add them now as gap entries.
+        MergedLineNode* node = lst_merge_B.first;
+        while (node != nullptr)
+        {
+            // Add gap from B.
+            MergedLine line_b = {
+                .first = CharOffset::Sentinel,
+                .last = CharOffset::Sentinel,
+                .v_line = lst_B.count,
+                .line = CursorLine::Beginning,
+                .type = EditType::Invalid,
+            };
+            // Insert B.
+            node->line = line_b;
+            SLLQueuePop(lst_merge_B.first, lst_merge_B.last);
+            node->next = nullptr;
+            --lst_merge_B.count;
+            SLLQueuePush(lst_B.first, lst_B.last, node);
+            ++lst_B.count;
+
+            // Move node forward.
+            node = lst_merge_B.first;
+        }
+        return {
+            .lst_A = lst_A,
+            .lst_B = lst_B,
+            .merged_txt_A = {},
+            .merged_txt_B = {},
+        };
+    }
+
     // Building.
     DiffPanelResponse build_diff_panel(DiffPanel* panel,
                                         CmdBuffer::CmdList* cmd_lst,

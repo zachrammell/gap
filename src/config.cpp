@@ -272,6 +272,7 @@ namespace Config
             .del_mark                   = hex_to_vec4f(0xFF0000FF),
             .ins_mark                   = hex_to_vec4f(0x00FF00FF),
             .selected_dir_file          = hex_to_vec4f(0x00ADFF80),
+            .diff_computing             = hex_to_vec4f(0x00ADFFFF),
         };
 
         DiffColors diff_colors_inverse_instance;
@@ -349,6 +350,7 @@ namespace Config
             .async_update_frequency_ms = 1000,
             .noisy_events = false,
             .noisy_flattened_events = false,
+            .noisy_diff_timing = false,
             .fullscreen = false,
             .maximized = false,
         };
