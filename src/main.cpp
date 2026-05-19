@@ -1041,7 +1041,7 @@ uint32_t flatten_os_events(UI::UIState* state, OS::Events* events, const ScreenD
                 UTF8::EncodeInput in;
                 std::string_view text = UTF8::utf8_encode(&in, e->character);
                 char* append_to = state->in_buf.str + state->in_buf.size;
-                uint64_t cpy_size = std::min(text_buf_size - state->in_buf.size, text.size());
+                uint64_t cpy_size = std::min(text_buf_size - state->in_buf.size, (uint64_t)text.size());
                 memcpy(append_to, text.data(), cpy_size);
                 state->in_buf.size += cpy_size;
                 Render::request_frames();
@@ -1782,6 +1782,10 @@ namespace UI
 #include "renderer-opengl.cpp"
 #endif // BUILD_OPENGL_RENDERER
 
+#ifdef BUILD_METAL_RENDERER
+#include "renderer-metal.cpp"
+#endif // BUILD_METAL_RENDERER
+
 #ifdef WIN32
 // Windows goes last.
 #define WIN32_GFX
@@ -1796,10 +1800,15 @@ namespace UI
 #endif // BUILD_D3D11_RENDERER
 
 #pragma warning(pop)
-#else // ^^^ WIN32 ^^^ / vvv !WIN32 vvv
+#elif OS_LINUX
 #define LINUX_GFX
 #include "os-linux.cpp"
-#endif // WIN32
+#elif OS_MAC
+#define MAC_GFX
+#include "os-mac.cpp"
+#else
+#error OS Not Yet Supported
+#endif
 
 #ifdef BUILD_PROFILED
 #include "TracyClient.cpp"

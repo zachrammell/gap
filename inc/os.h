@@ -26,7 +26,7 @@
 #define os_atomic_u32_eval_assign(x,c)         _InterlockedExchange((long *)(x),(c))
 #define os_atomic_u32_eval_cond_assign(x,k,c)  _InterlockedCompareExchange((long *)(x),(k),(c))
 #define os_atomic_u32_add_eval(x,c)            _InterlockedAdd((long *)(x), (c))
-#elif defined(OS_LINUX)
+#elif OS_LINUX || OS_MAC
 #define os_atomic_u128_eval(x, r)              ({ __int128 _new = __atomic_load_n((__int128*)x, __ATOMIC_SEQ_CST); memcpy(r, &_new, sizeof(__int128)); r; })
 #define os_atomic_u128_eval_cond_assign(x,k,c) ({ __int128 _new; memcpy(&_new, &(k), sizeof(__int128)); bool _res = __atomic_compare_exchange_n((__int128 *)(x),(__int128*)(c),_new,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); memcpy(&(k), &_new, sizeof(__int128)); _res; })
 #define os_atomic_u64_eval(x)                  __atomic_load_n(x, __ATOMIC_SEQ_CST)

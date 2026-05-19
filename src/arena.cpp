@@ -348,7 +348,7 @@ namespace Arena
 
     void pop_to(Arena* arena, Position pos)
     {
-        Position big_pos = Position{ std::max(arena_header, rep(pos)) };
+        Position big_pos = Position{ std::max(arena_header, (size_t)(rep(pos))) };
         Arena* current = arena->current;
         for (Arena* prev = nullptr; current->base_pos >= big_pos; current = prev)
         {
