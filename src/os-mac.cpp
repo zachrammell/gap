@@ -27,6 +27,13 @@
 #include <mach/mach.h>
 #include <dispatch/dispatch.h>
 
+#import <Cocoa/Cocoa.h>
+#import <Carbon/Carbon.h>
+#if 0
+#import <Metal/Metal.h>
+#import <MetalKit/MetalKit.h>
+#endif
+
 #include "arena.h"
 #include "config.h"
 #include "constants.h"
@@ -41,6 +48,12 @@
 #include "util.h"
 #include "vec.h"
 
+@interface OSMacWindow : NSWindow<NSWindowDelegate>
+{
+}
+@property (nonatomic) NSEventModifierFlags previous_flags;
+@end
+
 namespace OS
 {
   namespace
@@ -50,6 +63,7 @@ namespace OS
     constexpr uint64_t pipe_buffer_size = KB(16);
 
     struct MacEntity;
+
 
     struct IOPipeEndpoint
     {
@@ -115,6 +129,24 @@ namespace OS
       uint64_t count;
     };
 
+    DirIterData *alloc_dir_iter_data(DirIterDataAlloc *alloc)
+    {
+      alloc->push_front({});
+      DirIterData *data = &alloc->front();
+      data->dir = nullptr;
+      data->dp = nullptr;
+      return data;
+    }
+
+    void release_dir_iter_data(DirIterDataAlloc *alloc, DirIterData *data)
+    {
+      if (data->dir != nullptr)
+      {
+        closedir(data->dir);
+      }
+      ListHelpers::remove_list_element(alloc, data);
+    }
+
     struct MacBackendData
     {
       RenderCoreData *render_data;
@@ -125,8 +157,15 @@ namespace OS
       MacEntityList cond_var_lst;
       MacEntity *entity_free_list;
       SystemInfo sys_info;
+      uint64_t start_time_ns;
+      DirIterDataAlloc dir_iter_data_alloc;
       Ticks double_click_time;
       bool fullscreened;
+
+      //- brt: Cocoa
+      OSMacWindow *wind;
+
+      //- brt: Metal
     };
 
     MacBackendData impl_data;
@@ -163,6 +202,16 @@ namespace OS
       --lst->count;
       SLLStackPush(data->entity_free_list, e);
       pthread_mutex_unlock(&data->mac_arena_mutex);
+    }
+    
+    OSWindow os_window(OSMacWindow *wnd)
+    {
+      return OSWindow((uintptr_t)wnd);
+    }
+
+    OSMacWindow *mac_window(OSWindow wnd)
+    {
+      return (OSMacWindow *)(rep(wnd));
     }
 
     FileHandle os_file_handle(int fd)
@@ -210,6 +259,15 @@ namespace OS
       return static_cast<pid_t>(h);
     }
 
+    NSString *ns_string_from_str8(String8 string)
+    {
+      NSString *result = [[NSString alloc] initWithBytes:string.str
+                                                  length:string.size
+                                                encoding:NSUTF8StringEncoding];
+      return result;
+    }
+
+
     uint64_t sysctl_u64(char *name)
     {
       uint64_t result = 0;
@@ -227,6 +285,7 @@ namespace OS
 
     bool init_mac(MacBackendData *data)
     {
+      data->start_time_ns = clock_gettime_nsec_np(CLOCK_REALTIME);
       data->double_click_time = Ticks{ 500 };
       return true;
     }
@@ -269,6 +328,35 @@ namespace OS
       release_entity(data, &data->mutex_lst, e);
     }
 
+    ConditionVariable os_condition_var(MacEntity *e)
+    {
+      return ConditionVariable{ reinterpret_cast<PrimitiveType<ConditionVariable>>(e) };
+    }
+    
+    MacEntity *mac_condition_var(ConditionVariable cv)
+    {
+      return reinterpret_cast<MacEntity *>(cv);
+    }
+
+    MacEntity *mac_condition_var_alloc(MacBackendData *data)
+    {
+      MacEntity *cv = push_entity(data, &data->cond_var_lst);
+      int init_result = pthread_cond_init(&cv->cv, nullptr);
+      if (init_result != 0)
+      {
+        release_entity(data, &data->cond_var_lst, cv);
+        return nullptr;
+      }
+      return cv;
+    }
+    
+    void release_mac_condition_var(MacBackendData *data, ConditionVariable cv)
+    {
+      MacEntity *e = mac_condition_var(cv);
+      pthread_cond_destroy(&e->cv);
+      release_entity(data, &data->cond_var_lst, mac_condition_var(cv));
+    }
+
     Thread os_thread(MacEntity *e)
     {
       return Thread{ reinterpret_cast<PrimitiveType<Thread>>(e) };
@@ -305,6 +393,58 @@ namespace OS
       release_entity(data, &data->thread_lst, mac_thread(thread));
     }
   } //namespace [anon]
+
+  ///////////////////////////////////////////////////////////////////////////////
+  //~ brt: START GAP API
+
+  OSWindow init_window(Vec4i wind_rect, String8 title)
+  {
+    MacBackendData *data = mac_data();
+    OSWindow result = OSWindow::Sentinel;
+    @autoreleasepool
+    {
+      float scale = 1.0/NSScreen.mainScreen.backingScaleFactor;
+      NSRect rect = NSMakeRect(wind_rect.x*scale, wind_rect.y*scale, wind_rect.z*scale, wind_rect.a*scale);
+      NSUInteger mask = NSWindowStyleMaskTitled |
+        NSWindowStyleMaskClosable |
+        NSWindowStyleMaskMiniaturizable |
+        NSWindowStyleMaskResizable;
+
+      OSMacWindow *ns_window = [[OSMacWindow alloc] initWithContentRect:rect
+                                                              styleMask:mask
+                                                                backing:NSBackingStoreBuffered
+                                                                  defer:NO];
+      data->wind = ns_window;
+
+      NSString *ns_title = ns_string_from_str8(title);
+      [ns_window setTitle:ns_title];
+      ns_window.delegate = ns_window;
+      [ns_window setAcceptsMouseMovedEvents:YES];
+      [NSApp activateIgnoringOtherApps:YES];
+      [ns_window makeKeyAndOrderFront:nil];
+      result = os_window(ns_window);
+    }
+    return result;
+  }
+
+  void set_cursor(CursorStyle style)
+  {
+    NSCursor *ns_cursor = nil;
+    switch(style)
+    {
+      case CursorStyle::IBeam: ns_cursor = [NSCursor IBeamCursor]; break;
+      case CursorStyle::Select: ns_cursor = [NSCursor arrowCursor]; break;
+      case CursorStyle::UpDownArrow: ns_cursor = [NSCursor resizeUpDownCursor]; break;
+      case CursorStyle::LeftRightArrow: ns_cursor = [NSCursor resizeLeftRightCursor]; break;
+      case CursorStyle::SouthEastArrow: ns_cursor = [NSCursor openHandCursor]; break;
+      case CursorStyle::SouthWestArrow: ns_cursor = [NSCursor openHandCursor]; break;
+      case CursorStyle::SizeAll: ns_cursor = [NSCursor openHandCursor]; break;
+    }
+    if (ns_cursor != nil)
+    {
+      [ns_cursor set];
+    }
+  }
 
   void *mem_reserve(AllocationSize size)
   {
@@ -399,10 +539,134 @@ namespace OS
     pthread_mutex_unlock(&e->mutex);
   }
 
+
+  ConditionVariable alloc_condition_var()
+  {
+    MacBackendData *data = mac_data();
+    MacEntity *cv = mac_condition_var_alloc(data);
+    ConditionVariable result = ConditionVariable::Sentinel;
+    if (cv != nullptr)
+    {
+      result = os_condition_var(cv);
+    }
+    return result;
+  }
+  
+  void release_condition_var(ConditionVariable cv)
+  {
+    MacBackendData *data = mac_data();
+    release_mac_condition_var(data, cv);
+  }
+
+  bool wait_condition_var(ConditionVariable cv, Mutex mutex, MicroSec end_us)
+  {
+    MacEntity* m_cv = mac_condition_var(cv);
+    MacEntity* m_mutex = mac_mutex(mutex);
+    int result;
+    if (end_us == MicroSec::Infinite)
+    {
+      result = pthread_cond_wait(&m_cv->cv, &m_mutex->mutex);
+    }
+    else
+    {
+      timespec end_timespec{};
+      end_timespec.tv_sec = rep(end_us)/Million(1);
+      // Chop the seconds out.
+      end_timespec.tv_nsec = Thousand(1) * (rep(end_us) - (rep(end_us) / Million(1)) * Million(1));
+      result = pthread_cond_timedwait(&m_cv->cv, &m_mutex->mutex, &end_timespec);
+    }
+    return result != ETIMEDOUT;
+  }
+
+  void notify_one_condition_var(ConditionVariable cv)
+  {
+    MacEntity *m_cv = mac_condition_var(cv);
+    pthread_cond_signal(&m_cv->cv);
+  }
+
+  void notify_all_condition_var(ConditionVariable cv)
+  {
+    MacEntity *m_cv = mac_condition_var(cv);
+    pthread_cond_broadcast(&m_cv->cv);
+  }
+
+  void populate_core_render_data(RenderCoreData *rd_data)
+  {
+    //- brt: NYI
+  }
+
+  bool delta_meets_double_click_time(Ticks start, Ticks end)
+  {
+    if (start > end)
+      return false;
+    auto double_click_time = mac_data()->double_click_time;
+    return ((rep(end) - rep(start)) <= rep(double_click_time));
+  }
+
+  bool delta_meets_double_click_time(Ticks32 start, Ticks32 end)
+  {
+    if (start > end)
+      return false;
+    auto double_click_time = mac_data()->double_click_time;
+    return ((rep(end) - rep(start)) <= rep(double_click_time));
+  }
+
+  Error clipboard_text(Arena::Arena *arena, String8 *result)
+  {
+    *result = String8{};
+    NSPasteboard *pboard = [NSPasteboard generalPasteboard];
+    NSString *ns_string = [pboard stringForType:NSPasteboardTypeString];
+    *result = str8_copy(arena, str8_cstr((char *)ns_string.UTF8String));
+    [ns_string release];
+    Error error = Error::None;
+    return error;
+  }
+
+  Error set_clipboard(String8 buf)
+  {
+    NSString *ns_string = ns_string_from_str8(buf);
+    NSPasteboard *pboard = [NSPasteboard generalPasteboard];
+    [pboard clearContents];
+    [pboard setString:ns_string forType:NSPasteboardTypeString];
+    return Error::None;
+  }
+
+  Error set_clipboard_html(String8 buf, String8 html)
+  {
+    NSString *ns_buf_string = ns_string_from_str8(buf);
+    NSString *ns_html_string = ns_string_from_str8(html);
+    NSPasteboard *pboard = [NSPasteboard generalPasteboard];
+    [pboard clearContents];
+    [pboard setString:ns_buf_string forType:NSPasteboardTypeString];
+    [pboard setString:ns_html_string forType:NSPasteboardTypeHTML];
+    return Error::None;
+  }
+
+  ClipboardIdentity clipboard_id()
+  {
+    NSPasteboard *pboard = [NSPasteboard generalPasteboard];
+    return ClipboardIdentity{ (uint64_t) [pboard changeCount] };
+  }
+
   const SystemInfo *system_info()
   {
     MacBackendData *data = mac_data();
     return &data->sys_info;
+  }
+
+  //- brt: Time (in ms).
+  Ticks get_ticks()
+  {
+    MacBackendData *data = mac_data();
+    uint64_t now_ns = clock_gettime_nsec_np(CLOCK_REALTIME);
+    uint64_t delta_ns = data->start_time_ns - now_ns;
+    uint64_t delta_ms = delta_ns / Million(1);
+    return static_cast<Ticks>(delta_ms);
+  }
+
+  Ticks32 get_ticks32()
+  {
+    return static_cast<Ticks32>(get_ticks());
   }
 
   MicroSec now_microseconds()
@@ -528,6 +792,428 @@ namespace OS
     return str8_substr(path, { .len = end_pos });
   }
 
+  void open_url_in_browser(String8 url)
+  {
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    String8 url_cstr = str8_copy(scratch.arena, url);
+    CFStringRef s = CFStringCreateWithCString(NULL, url_cstr.str, kCFStringEncodingUTF8);
+    CFURLRef cfurl = CFURLCreateWithString(NULL, s, NULL);
+    LSOpenCFURLRef(cfurl, NULL);
+    CFRelease(cfurl);
+    CFRelease(s);
+    Arena::scratch_end(scratch);
+  }
+
+  void open_path_in_explorer(String8 path)
+  {
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    String8 url_cstr = str8_copy(scratch.arena, path);
+    CFStringRef s = CFStringCreateWithCString(0, url_cstr.str, kCFStringEncodingUTF8);
+    CFURLRef cfurl = CFURLCreateWithFileSystemPath(0, s, kCFURLPOSIXPathStyle, false);
+    if (cfurl)
+    {
+      CFArrayRef urls = CFArrayCreate(0, (const void **)&cfurl, 1, &kCFTypeArrayCallBacks);
+      if (urls)
+      {
+        LSLaunchURLSpec spec = {0};
+        spec.appURL = 0;
+        spec.itemURLs = urls;
+        spec.passThruParams = 0;
+        spec.launchFlags = kLSLaunchDefaults | kLSLaunchAndDisplayErrors;
+        spec.asyncRefCon = 0;
+        LSOpenFromURLSpec(&spec, 0);
+        CFRelease(urls);
+      }
+      LSOpenCFURLRef(cfurl, NULL);
+    }
+    CFRelease(cfurl);
+    CFRelease(s);
+    Arena::scratch_end(scratch);
+  }
+
+  void open_path_in_preferred_explorer(String8 exe, String8 path)
+  {
+    auto scratch = Arena::scratch_begin(Arena::no_conflicts);
+    String8List cmd_line{};
+    String8 cmd = str8_fmt(scratch.arena, "%S %S", exe, path);
+    str8_list_push(scratch.arena, &cmd_line, cmd);
+    OS::ProcessLaunchParams process_in{
+      .wd = str8_empty,
+        .cmd_line = cmd_line,
+        .env = {},
+        .flags = OS::LaunchFlags::InheritEnv | OS::LaunchFlags::Consoleless
+    };
+    auto process = launch_process(process_in);
+    detach_process(process);
+    Arena::scratch_end(scratch);
+  }
+
+  ProcessHandle launch_process(const ProcessLaunchParams& in)
+  {
+    // TODO: This is incomplete.  We need to handle various flags from the input such as inheriting the environment (or not) and injecting new
+    // environment variables.
+    // Start the show!
+    pid_t pid = fork();
+
+    // fork failed.  Close the pipes.
+    if (pid == -1)
+      return ProcessHandle::Sentinel;
+
+    // Child.
+    if (pid == 0)
+    {
+      // Create a vector of the strings that can be
+      // presented as argv.  So first we need to ensure
+      // that every single string is null-terminated
+      // and separated into the list.
+
+      // We can allocate a new arena for this so we don't
+      // run into the possibility to sharing the same
+      // kernel object as the mmap memory from the parent
+      // process arena.
+      Arena::Arena* arena = Arena::alloc(Arena::default_params);
+      String8List string_pool{};
+      for EachNode(n, in.cmd_line.first)
+      {
+        String8 str = str8_copy(arena, n->string);
+        str8_list_push(arena, &string_pool, str);
+      }
+
+      String8 wd = str8_copy(arena, in.wd);
+
+      // Change to the working directory.
+      set_working_directory(wd);
+
+      // Convert to the argv array.
+      // We are prepending "/bin/sh" and "-c", so we will
+      // need to add +2 and +1 for the null string.
+      uint64_t argc = 2 + string_pool.node_count + 1;
+      char** argv = Arena::push_array<char*>(arena, argc);
+      uint64_t i = 0;
+      char sh[] = "/bin/sh";
+      char dash_c[] = "-c";
+      argv[i++] = sh;
+      argv[i++] = dash_c;
+      for EachNode(n, string_pool.first)
+      {
+        argv[i++] = n->string.str;
+      }
+      argv[i++] = nullptr;
+      assert(i == argc);
+      // Start execution.
+      execvp("/bin/sh", argv);
+      // Note: This is only reached if execl fails.
+      exit(EXIT_FAILURE);
+    }
+    // Parent process.
+    return os_process_handle(pid);
+  }
+
+  void join_process(ProcessHandle handle)
+  {
+    pid_t pid = mac_process_handle(handle);
+    int status = 0;
+    if (waitpid(pid, &status, WNOHANG) > 0)
+    {
+#if 0
+      process_joined = 1;
+      if (exit_code_out)
+      {
+        U64 exit_code = (U64)(WEXITSTATUS(status));
+        *exit_code_out = exit_code;
+      }
+#endif
+    }
+  }
+
+  void detach_process(ProcessHandle)
+  {
+    //- brt: no-op. not sure what's best to do, not as simple as on Windows
+  }
+
+  void terminate_process(ProcessHandle handle)
+  {
+    pid_t pid = mac_process_handle(handle);
+    kill(pid, SIGKILL);
+    waitpid(pid, nullptr, 0);
+  }
+
+
+  ScreenDimensions window_size()
+  {
+    MacBackendData *data = mac_data();
+    CGFloat scale = data->wind.screen.backingScaleFactor;
+    NSRect rect_pt = data->wind.frame;
+    int width = (int)(rect_pt.size.width * scale);
+    int height = (int)(rect_pt.size.width * scale);
+    return { .width = Width{ width }, .height = Height{ height } };
+  }
+
+  ScreenDimensions client_size()
+  {
+    MacBackendData *data = mac_data();
+    CGFloat scale = data->wind.screen.backingScaleFactor;
+    NSRect rect_pt = data->wind.contentView.frame;
+    int width = (int)(rect_pt.size.width * scale);
+    int height = (int)(rect_pt.size.width * scale);
+    return { .width = Width{ width }, .height = Height{ height } };
+  }
+
+  Vec4i window_rect(OSWindow wind)
+  {
+    OSMacWindow *ns_window = mac_window(wind);
+    CGFloat scale = ns_window.screen.backingScaleFactor;
+    NSRect rect_pt = ns_window.frame;
+    int x = (int)(rect_pt.origin.x * scale);
+    int y = (int)(rect_pt.origin.y * scale);
+    int w = (int)(rect_pt.size.width * scale);
+    int h = (int)(rect_pt.size.height * scale);
+    return { x, y, w, h };
+  }
+
+  OSWindow core_window()
+  {
+    MacBackendData *data = mac_data();
+    return os_window(data->wind);
+  }
+
+  Error apply_window_border_color(OSWindow wind, const Vec4f &color)
+  {
+    //- brt: NYI
+    return Error::None;
+  }
+
+  Error apply_title_font_color(OSWindow wind, const Vec4f &color)
+  {
+    //- brt: NYI
+    return Error::None;
+  }
+
+  void query_events(Arena::Arena* arena, Events* lst, Wait wait)
+  {
+    MacBackendData *data = mac_data();
+
+    NSDate *deadline = is_yes(wait) ? [NSDate distantFuture] : [NSDate distantPast];
+    NSEvent *ns_event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                           untilDate:deadline
+                                              inMode:NSEventTrackingRunLoopMode
+                                            dequeue:YES];
+    for (;ns_event;)
+    {
+      bool should_send = true;
+#if 0
+      OS_MAC_Window *window = os_mac_window_from_nswindow(ns_event.window);
+      OS_Handle window_handle = os_mac_handle_from_window(window);
+      B32 release = 0;
+
+      switch (ns_event.type)
+      {
+        //- brt: wakeup event
+        case NSEventTypeApplicationDefined:{}break;
+
+        case NSEventTypeLeftMouseUp:
+        case NSEventTypeRightMouseUp:
+        {
+          release = 1;
+        } // fallthrough
+        case NSEventTypeLeftMouseDown:
+        case NSEventTypeRightMouseDown:
+        {
+          OS_Event *event = os_mac_push_event(release ? OS_EventKind_Release : OS_EventKind_Press, window);
+          event->window = window_handle;
+
+          if (ns_event.type == NSEventTypeLeftMouseDown || ns_event.type == NSEventTypeLeftMouseUp)
+          {
+            event->key = OS_Key_LeftMouseButton;
+          } else if (ns_event.type == NSEventTypeRightMouseDown || ns_event.type == NSEventTypeRightMouseUp)
+          {
+            event->key = OS_Key_RightMouseButton;
+          }
+          NSPoint pos = ns_event.locationInWindow;
+          F32 scale_factor = ns_event.window.screen.backingScaleFactor;
+          event->pos.x = (F32) pos.x*scale_factor;
+          event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
+        } break;
+
+        case NSEventTypeKeyUp:
+        {
+          release = 1;
+        } // fallthrough
+        case NSEventTypeKeyDown:
+        {
+          should_send = 0;
+          // brt: key down & key up
+          {
+            OS_Event *event = os_mac_push_event(release ? OS_EventKind_Release : OS_EventKind_Press, window);
+            event->window = window_handle;
+            event->key = os_mac_os_key_from_vkey(ns_event.keyCode);
+            event->is_repeat = ns_event.ARepeat != 0;
+            if(event->key == OS_Key_Alt   && event->modifiers & OS_Modifier_Alt)   { event->modifiers &= ~OS_Modifier_Alt; }
+            if(event->key == OS_Key_Ctrl  && event->modifiers & OS_Modifier_Ctrl)  { event->modifiers &= ~OS_Modifier_Ctrl; }
+            if(event->key == OS_Key_Shift && event->modifiers & OS_Modifier_Shift) { event->modifiers &= ~OS_Modifier_Shift; }
+            if(event->key == OS_Key_Super && event->modifiers & OS_Modifier_Super) { event->modifiers &= ~OS_Modifier_Super; }
+          }
+
+          // brt: try text input
+          if (release == 0 && ([ns_event modifierFlags] & (NSEventModifierFlagCommand|NSEventModifierFlagControl)) == 0)
+          {
+            NSString *chars = ns_event.characters;
+            NSUInteger length = chars.length;
+            unichar buffer[32];
+            [chars getCharacters:buffer range:NSMakeRange(0, length)];
+            for (NSUInteger idx = 0; idx < length; idx++)
+            {
+              unichar high = buffer[idx];
+              UTF32Char codepoint = 0;
+              // brt: surrogate pair?
+              if (CFStringIsSurrogateHighCharacter(high) &&
+                  idx + 1 < length &&
+                  CFStringIsSurrogateLowCharacter(buffer[idx + 1]))
+              {
+                unichar low = buffer[idx + 1];
+                codepoint = CFStringGetLongCharacterForSurrogatePair(high, low);
+                idx++;
+              }
+              else
+              {
+                codepoint = high;
+              }
+              if (codepoint >= 32 && codepoint < 127)
+              {
+                OS_Event *event = os_mac_push_event(OS_EventKind_Text, window);
+                event->window = window_handle;
+                event->character = codepoint;
+              }
+            }
+          }
+        } break;
+
+        case NSEventTypeLeftMouseDragged:
+        case NSEventTypeRightMouseDragged:
+        {
+          OS_Event *event = os_mac_push_event(OS_EventKind_Press, window);
+          if (ns_event.type == NSEventTypeRightMouseDragged) 
+          {
+            event->key = OS_Key_LeftMouseButton;
+          } else if (ns_event.type == NSEventTypeRightMouseDragged) 
+          {
+            event->key = OS_Key_RightMouseButton;
+          }
+        } // fallthrough
+        case NSEventTypeMouseMoved:
+        {
+          OS_Event *event = os_mac_push_event(OS_EventKind_MouseMove, window);
+          NSPoint pos = ns_event.locationInWindow;
+          F32 scale_factor = ns_event.window.screen.backingScaleFactor;
+          event->pos.x = (F32) pos.x*scale_factor;
+          event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
+        } break;
+
+        case NSEventTypeScrollWheel:
+        {
+          OS_Event *event = os_mac_push_event(OS_EventKind_Scroll, window);
+          NSPoint pos = ns_event.locationInWindow;
+          F32 scale_factor = ns_event.window.screen.backingScaleFactor;
+          F32 wheel_x = -ns_event.scrollingDeltaX;
+          F32 wheel_y = -ns_event.scrollingDeltaY;
+          if (!ns_event.hasPreciseScrollingDeltas)
+          {
+            wheel_x *= 120.f;
+            wheel_y *= 120.f;
+          }
+          event->pos.x = (F32) pos.x*scale_factor;
+          event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
+          event->delta = v2f32(wheel_x, wheel_y);
+        } break;
+
+        default:
+        {
+          // brt: debug log this?
+          break;
+        }
+      }
+#endif
+
+      if (should_send)
+      {
+        [NSApp sendEvent:ns_event];
+      }
+
+      ns_event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                    untilDate:[NSDate distantPast]
+                                       inMode:NSEventTrackingRunLoopMode
+                                      dequeue:YES];
+    }
+  }
+
+  void window_minimum_size(ScreenDimensions min_size)
+  {
+    //- brt: NYI
+  }
+
+  void destroy_window(OSWindow wind)
+  {
+    //- brt: NYI
+  }
+
+  bool window_minimized(OSWindow wind)
+  {
+    //- brt: NYI
+    return false;
+  }
+
+  bool window_maximized(OSWindow wind)
+  {
+    //- brt: NYI
+    return false;
+  }
+
+  bool window_fullscreened(OSWindow wind)
+  {
+    //- brt: NYI
+    return false;
+  }
+
+  void window_maximize(OSWindow wind)
+  {
+    //- brt: NYI
+  }
+
+  void window_fullscreen(OSWindow wind)
+  {
+    //- brt: NYI
+  }
+
+  void window_restore(OSWindow wind)
+  {
+    //- brt: NYI
+  }
+
+  void window_windowed(OSWindow wind)
+  {
+    //- brt: NYI
+  }
+
+  Hz monitor_refresh_rate()
+  {
+    //- brt: NYI
+    return Hz::Default;
+  }
+
+  Hz recompute_monitor_refresh_rate()
+  {
+    //- brt: NYI
+    return Hz::Default;
+  }
+
+  DPI monitor_dpi()
+  {
+    MacBackendData *data = mac_data();
+    CGFloat scale = data->wind.screen.backingScaleFactor;
+    uint32_t dpi = (uint32_t)(96.0 * scale);
+    return DPI{ dpi };
+  }
+
   Error exe_path(Arena::Arena* arena, String8* buf)
   {
     auto scratch = Arena::scratch_begin({ &arena, 1 });
@@ -557,6 +1243,46 @@ namespace OS
       }
     }
 
+    Arena::scratch_end(scratch);
+    return Error::None;
+  }
+
+  Error app_path(Arena::Arena* arena, String8* buf, String8 org, String8 app)
+  {
+    auto scratch = Arena::scratch_begin({ &arena, 1 });
+    String8List lst{};
+    String8 home = str8_cstr(getenv("HOME"));
+    String8 prefix = str8_mut(str8_literal("/."));
+    str8_list_push(scratch.arena, &lst, home);
+    str8_list_push(scratch.arena, &lst, prefix);
+    str8_list_push(scratch.arena, &lst, org);
+    // Make a temp string for this.
+    String8 joined = str8_list_join(scratch.arena, lst);
+    if (mkdir(joined.str, 0755) == -1)
+    {
+      if (errno != EEXIST)
+      {
+        Arena::scratch_end(scratch);
+        return Error::CreateDirectoryFailed;
+      }
+    }
+    lst = String8List{};
+    String8 sep = str8_mut(str8_literal("/"));
+    str8_list_push(scratch.arena, &lst, joined);
+    str8_list_push(scratch.arena, &lst, sep);
+    str8_list_push(scratch.arena, &lst, app);
+    joined = str8_list_join(scratch.arena, lst);
+    if (mkdir(joined.str, 0755) == -1)
+    {
+      if (errno != EEXIST)
+      {
+        Arena::scratch_end(scratch);
+        return Error::CreateDirectoryFailed;
+      }
+    }
+    // Now that the directory has been created, we're going to assemble the final
+    // path name by appending the '/' to the end and placing it in the final arena.
+    *buf = str8_cat(arena, joined, sep);
     Arena::scratch_end(scratch);
     return Error::None;
   }
@@ -754,6 +1480,101 @@ namespace OS
     return result == 0;
   }
 
+  ///////////////////////////////////////////////////////////////////////////////
+  //~ brt: Directory Iteration
+  DirIter open_dir_iter(String8 dir, DirIterFlags flags)
+  {
+    MacBackendData *data = mac_data();
+    DirIterData *dir_data = alloc_dir_iter_data(&data->dir_iter_data_alloc);
+    dir_data->core_dir = sv_str8(dir);
+    dir_data->dir = opendir(dir_data->core_dir.c_str());
+    DirIter result = DirIter::Sentinel;
+    if (dir_data->dir != nullptr)
+    {
+      dir_data->flags = flags;
+      result = os_dir_iter(dir_data);
+    }
+    else
+    {
+      release_dir_iter_data(&data->dir_iter_data_alloc, dir_data);
+    }
+    return result;
+  }
+
+  bool dir_iter_next(Arena::Arena *arena, DirIterResult *result, DirIter iter)
+  {
+    assert(iter != DirIter::Sentinel);
+    DirIterData *dir_data = mac_dir_iter(iter);
+    if (dir_data->dir == nullptr ||
+        implies(dir_data->flags, DirIterFlags::Done))
+    {
+      return false;
+    }
+
+    bool found = false;
+    for (bool usable = false; !usable;)
+    {
+      dir_data->dp = readdir(dir_data->dir);
+      found = dir_data->dp != nullptr;
+      String8 name = str8_empty;
+
+      FileProperty props{};
+      if (found)
+      {
+        usable = true;
+        auto scratch = Arena::scratch_begin({ &arena, 1 });
+        name = str8_cstr(dir_data->dp->d_name);
+        String8 dir_name = str8_cstr(dir_data->dp->d_name);
+        String8 path = combine_paths(scratch.arena, str8_cppview(dir_data->core_dir), dir_name);
+        result->path = path;
+        result->props = file_properties(result->path);
+        props = result->props.props;
+        if (not implies(dir_data->flags, DirIterFlags::FullPath))
+        {
+          result->path = dir_name;
+        }
+        result->path = str8_copy(arena, result->path);
+        Arena::scratch_end(scratch);
+      }
+
+      //- brt: figure out if this is filtered & excluse meta directories.
+      if (str8_match_exact(name, str8_mut(str8_literal(".")))
+          or str8_match_exact(name, str8_mut(str8_literal(".."))))
+      {
+        usable = false;
+      }
+
+      if (implies(props, FileProperty::Directory))
+      {
+        usable = usable and not implies(dir_data->flags, DirIterFlags::SkipDirs);
+      }
+      else
+      {
+        usable = usable and not implies(dir_data->flags, DirIterFlags::SkipFiles);
+      }
+
+      if (usable)
+      {
+        break;
+      }
+
+      if (not found)
+      {
+        dir_data->flags |= DirIterFlags::Done;
+        break;
+      }
+    }
+    return found;
+  }
+
+  void close_dir_iter(DirIter iter)
+  {
+    assert(iter != DirIter::Sentinel);
+    MacBackendData *data = mac_data();
+    DirIterData *dir_data = mac_dir_iter(iter);
+    release_dir_iter_data(&data->dir_iter_data_alloc, dir_data);
+  }
+
   ENABLE_UNHANDLED_CASE_WARNING()
     String8 error_text(Error e)
     {
@@ -794,8 +1615,19 @@ namespace OS
   {
     return OSError{ (uint32_t)errno };
   }
+  
+  String8 format_error(Arena::Arena *arena, OSError err)
+  {
+    String8 result{};
+    String8 os_err_txt = str8_cstr(strerror(rep(err)));
+    result = str8_copy(arena, os_err_txt);
+    return result;
+  }
 
 } //namespace OS
+
+@implementation OSMacWindow
+@end
 
 int main(int argc, char **argv)
 {

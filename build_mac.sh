@@ -42,7 +42,7 @@ cc_debug="${cc_common} -g -O0 -DBUILD_DEBUG=1"
 cc_release="${cc_common} -g -O2 -DNDEBUG"
 
 #link_common="-lstdc++ -lm -lGL -lX11 -lXext -lXrandr"
-link_common="-lpthread"
+link_common="-lpthread -framework CoreFoundation -framework Cocoa -framework Metal -framework QuartzCore"
 
 # --- Choose Compile/Link Lines ----------------------------------------------
 if [ -n "${gcc+x}" ];     then compile_debug="${cc_debug}"; fi
