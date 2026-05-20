@@ -116,6 +116,7 @@ then
   $c_compile $freetype
   $cxx_compile $gapsrc
   $link
+  codesign --force --deep --sign - --entitlements ../res/entitlements.plist gap
 fi
 
 if [ -n "${app+x}" ]

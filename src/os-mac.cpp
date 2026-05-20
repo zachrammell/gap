@@ -29,10 +29,6 @@
 
 #import <Cocoa/Cocoa.h>
 #import <Carbon/Carbon.h>
-#if 0
-#import <Metal/Metal.h>
-#import <MetalKit/MetalKit.h>
-#endif
 
 #include "arena.h"
 #include "config.h"
@@ -397,6 +393,8 @@ namespace OS
   ///////////////////////////////////////////////////////////////////////////////
   //~ brt: START GAP API
 
+#ifdef MAC_GFX
+
   OSWindow init_window(Vec4i wind_rect, String8 title)
   {
     MacBackendData *data = mac_data();
@@ -410,6 +408,7 @@ namespace OS
         NSWindowStyleMaskMiniaturizable |
         NSWindowStyleMaskResizable;
 
+      //- brt: create window
       OSMacWindow *ns_window = [[OSMacWindow alloc] initWithContentRect:rect
                                                               styleMask:mask
                                                                 backing:NSBackingStoreBuffered
@@ -423,9 +422,17 @@ namespace OS
       [NSApp activateIgnoringOtherApps:YES];
       [ns_window makeKeyAndOrderFront:nil];
       result = os_window(ns_window);
+
+      //- brt: equip renderer
+      if (!Render::os_init_renderer_window(result))
+      {
+        result = OSWindow::Sentinel;
+      }
     }
     return result;
   }
+
+#endif
 
   void set_cursor(CursorStyle style)
   {
@@ -970,6 +977,17 @@ namespace OS
     int h = (int)(rect_pt.size.height * scale);
     return { x, y, w, h };
   }
+
+#ifdef MAC_GFX
+  void swap_buffers([[maybe_unused]] OSWindow wind)
+  {
+    MacBackendData* data = mac_data();
+    GAP_UNUSED(data);
+    // For now, assume we're swapping with the core window.
+    assert(mac_window(wind) == data->wind);
+    Render::os_swap_buffers(wind);
+  }
+#endif
 
   OSWindow core_window()
   {
