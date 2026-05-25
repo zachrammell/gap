@@ -467,6 +467,8 @@ KeyDownResult ui_key_down(const OS::Event& e, UIState* state, RenderCoreData* da
     case OS::Key::Ctrl:
         state->mods |= KeyMods::Ctrl;
         break;
+    case OS::Key::Command:
+        state->mods |= KeyMods::Cmd;
     }
 
     // Process hotkeys.
@@ -484,7 +486,8 @@ KeyDownResult ui_key_down(const OS::Event& e, UIState* state, RenderCoreData* da
         if (e.key != OS::Key::Esc
             and e.key != OS::Key::Shift
             and e.key != OS::Key::Alt
-            and e.key != OS::Key::Ctrl)
+            and e.key != OS::Key::Ctrl
+            and e.key != OS::Key::Command)
         {
             if (state->hotkeys.rebind_target != Hotkey::None)
             {
@@ -530,6 +533,8 @@ void ui_key_up(const OS::Event& e, UIState* state)
         break;
     case OS::Key::Ctrl:
         state->mods = remove_flag(state->mods, KeyMods::Ctrl);
+    case OS::Key::Command:
+        state->mods = remove_flag(state->mods, KeyMods::Cmd);
         break;
     }
 }
@@ -881,7 +886,7 @@ void update_frame(RenderCoreData* data)
 {
     auto screen = OS::client_size();
     UpdateRenderSizeData update_data{ .new_screen = screen,
-                                        .render_data = data };
+                                      .render_data = data };
     // Note: Handles resizes internally.
     update_render_size(update_data);
     render_core(data);
@@ -1041,7 +1046,7 @@ uint32_t flatten_os_events(UI::UIState* state, OS::Events* events, const ScreenD
                 UTF8::EncodeInput in;
                 std::string_view text = UTF8::utf8_encode(&in, e->character);
                 char* append_to = state->in_buf.str + state->in_buf.size;
-                uint64_t cpy_size = std::min(text_buf_size - state->in_buf.size, text.size());
+                uint64_t cpy_size = std::min(text_buf_size - state->in_buf.size, (uint64_t)text.size());
                 memcpy(append_to, text.data(), cpy_size);
                 state->in_buf.size += cpy_size;
                 Render::request_frames();
@@ -1782,6 +1787,10 @@ namespace UI
 #include "renderer-opengl.cpp"
 #endif // BUILD_OPENGL_RENDERER
 
+#ifdef BUILD_METAL_RENDERER
+#include "renderer-metal.cpp"
+#endif // BUILD_METAL_RENDERER
+
 #ifdef WIN32
 // Windows goes last.
 #define WIN32_GFX
@@ -1796,10 +1805,15 @@ namespace UI
 #endif // BUILD_D3D11_RENDERER
 
 #pragma warning(pop)
-#else // ^^^ WIN32 ^^^ / vvv !WIN32 vvv
+#elif OS_LINUX
 #define LINUX_GFX
 #include "os-linux.cpp"
-#endif // WIN32
+#elif OS_MAC
+#define MAC_GFX
+#include "os-mac.cpp"
+#else
+#error OS Not Yet Supported
+#endif
 
 #ifdef BUILD_PROFILED
 #include "TracyClient.cpp"

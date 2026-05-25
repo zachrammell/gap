@@ -49,9 +49,17 @@ void update_frame(RenderCoreData* data);
 #define BUILD_OS_STRING "LINUX"
 #endif // OS_LINUX
 
+#ifdef OS_MAC
+#define BUILD_OS_STRING "macOS"
+#endif // OS_MAC
+
 #ifdef BUILD_OPENGL_RENDERER
 #define BUILD_RENDERER_STRING "OpenGL"
 #endif // BUILD_OPENGL_RENDERER
+
+#ifdef BUILD_METAL_RENDERER
+#define BUILD_RENDERER_STRING "Metal"
+#endif // BUILD_METAL_RENDERER
 
 #ifdef BUILD_D3D11_RENDERER
 #define BUILD_RENDERER_STRING "DX11"

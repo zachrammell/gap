@@ -19,7 +19,7 @@ namespace Arena
 
         // The actual arena header is much smaller than this, but skipping more bytes guarantees we can
         // add some more meta info about the header later.
-        constexpr size_t arena_header = 128;
+        constexpr uint64_t arena_header = 128;
         static_assert(sizeof(Arena) <= arena_header);
 
 #if BUILD_DEBUG

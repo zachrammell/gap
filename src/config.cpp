@@ -716,7 +716,9 @@ namespace Config
             // TODO: We should probably use a default that isn't so... Windows-y.
 #if WIN32
             fonts.fallback_fonts_folder = str8_copy(arena, str8_mut(str8_literal("C:\\Windows\\Fonts")));
-#else
+#elif OS_MAC
+            fonts.fallback_fonts_folder = str8_copy(arena, str8_mut(str8_literal("/System/Library/Fonts")));
+#elif OS_LINUX
             fonts.fallback_fonts_folder = str8_copy(arena, str8_mut(str8_literal("/usr/share/fonts")));
 #endif // WIN32
             fonts.current_font = str8_empty;
@@ -730,6 +732,7 @@ namespace Config
                 .light_mode = false,
                 .smooth_scroll = true,
                 .subpixel_font_aa = true,
+                .font_hinting = true,
                 .render_whitespace = true,
             };
             return effects;

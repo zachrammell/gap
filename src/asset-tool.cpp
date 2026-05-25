@@ -305,8 +305,12 @@ ENABLE_IF_CONSTEXPR_SUGGEST_WARNING();
 #ifdef WIN32
 // Windows goes last.
 #include "os-win32.cpp"
-#else // ^^^ WIN32 ^^^ / vvv !WIN32 vvv
+#elif OS_LINUX
 #include "os-linux.cpp"
+#elif OS_MAC
+#include "os-mac.cpp"
+#else
+#error OS Not Yet Supported
 #endif // WIN32
 
 #ifdef BUILD_PROFILED
