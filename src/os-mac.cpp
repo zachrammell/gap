@@ -1199,7 +1199,7 @@ namespace OS
       NSDate *deadline = is_yes(wait) ? [NSDate distantFuture] : [NSDate distantPast];
       NSEvent *ns_event = [NSApp nextEventMatchingMask:NSEventMaskAny
                                              untilDate:deadline
-                                                inMode:NSEventTrackingRunLoopMode
+                                                inMode:NSDefaultRunLoopMode
                                                dequeue:YES];
       for (;ns_event;)
       {

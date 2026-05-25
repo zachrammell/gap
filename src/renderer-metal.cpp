@@ -18,7 +18,7 @@ namespace Render
     struct MetalWindowData
     {
       CAMetalLayer *layer;
-      id<MTLTexture> scratch_color;
+      id<MTLTexture> blur_colors[2];
       id<MTLTexture> stage_color;
       id<CAMetalDrawable> drawable;
       id<MTLCommandBuffer> cmd_buffer;
@@ -325,7 +325,7 @@ namespace Render
           mtl_pipeline_state_desc.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorZero;
           mtl_pipeline_state_desc.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
         }
-        else if (FragShader(frag_idx) == FragShader::Image)
+        else if (FragShader(frag_idx) == FragShader::Image || FragShader(frag_idx) == FragShader::BlurHorizVert)
         {
           mtl_pipeline_state_desc.colorAttachments[0].blendingEnabled = NO;
         }
@@ -565,6 +565,9 @@ namespace Render
               MetalEntity *tex = basic_texture_metal(std_data->tex);
               [mtl_encoder setFragmentTexture:tex->texture
                                       atIndex:0];
+              [mtl_encoder setFragmentBytes:&uniforms
+                                     length:sizeof(uniforms)
+                                    atIndex:0];
 
               //- brt: draw
               [mtl_encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
@@ -575,6 +578,313 @@ namespace Render
             }break;
             case CmdBuffer::CmdSort::Blur:
             {
+              //- brt: end current pass
+              [mtl_encoder endEncoding];
+
+              ////////////////////////////////////////
+              //- brt: downscale & vertical blur pass
+              //
+              {
+                mtl_pass_desc.colorAttachments[0].texture = wnd_data->blur_colors[0];
+                mtl_pass_desc.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+                mtl_pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
+                mtl_encoder = [mtl_cmd_buffer renderCommandEncoderWithDescriptor:mtl_pass_desc];
+
+                //- brt: setup viewport
+                MTLViewport viewport = {};
+                viewport.width   = static_cast<float>(rep(rend_data->screen_size.width)) / 2.0;
+                viewport.height  = static_cast<float>(rep(rend_data->screen_size.height)) / 2.0;
+                viewport.znear   = 0.0f;
+                viewport.zfar    = 1.0f;
+                viewport.originX = 0.0f;
+                viewport.originY = 0.0f;
+                [mtl_encoder setViewport:viewport];
+
+                //- brt: setup scissor
+                MTLScissorRect rect = {0};
+                rect.x = 0;
+                rect.y = 0;
+                rect.width = viewport.width;
+                rect.height = viewport.height;
+                [mtl_encoder setScissorRect:rect];
+
+                //- brt: setup pipeline
+                [mtl_encoder setRenderPipelineState:rend_data->pipelines[rep(FragShader::BlurHorizVert)]]; 
+
+                //- brt: create draw data
+                MetalAlloc mtl_verts = metal_push_aligned(4 * sizeof(CmdBuffer::DrawVertex), 256);
+                MetalAlloc mtl_indices = metal_push_aligned(6 * sizeof(CmdBuffer::Index), 256);
+                {
+                  CmdBuffer::DrawVertex *verts = (CmdBuffer::DrawVertex *)mtl_verts.v;
+                  uint32_t *indices = (uint32_t*)mtl_indices.v;
+
+                  // 0 - 1  |  a - b
+                  // | \ |  |  | \ |
+                  // 3 - 2  |  d - c
+                  Vec2f a{ 0.f, 0.f };
+                  Vec2f c{ (float)viewport.width, (float)viewport.height };
+                  Vec2f b{ c.x, a.y };
+                  Vec2f d{ a.x, c.y };
+                  Vec2f uv_a{ 0.0f, 1.0f };
+                  Vec2f uv_c{ 1.0f, 0.0f };
+                  Vec2f uv_b{ uv_c.x, uv_a.y };
+                  Vec2f uv_d{ uv_a.x, uv_c.y };
+
+                  Vec4f color = hex_to_vec4f(0xffffffff);
+
+                  verts[0] = { .pos = a, .color = color, .uv = uv_a, .cust1 = 1.0f };
+                  verts[1] = { .pos = b, .color = color, .uv = uv_b, .cust1 = 1.0f };
+                  verts[2] = { .pos = c, .color = color, .uv = uv_c, .cust1 = 1.0f };
+                  verts[3] = { .pos = d, .color = color, .uv = uv_d, .cust1 = 1.0f };
+
+                  indices[0] = 0;
+                  indices[1] = 1;
+                  indices[2] = 2;
+                  indices[3] = 0;
+                  indices[4] = 2;
+                  indices[5] = 3;
+                }
+
+                //- brt: bind resources
+                MetalUniforms uniforms = {};
+                uniforms.resolution = Vec2f(viewport.width, viewport.height);
+                uniforms.time = rend_data->time;
+                uniforms.camera_pos = rend_data->camera_pos;
+                uniforms.camera_scale = rend_data->camera_scale;
+                uniforms.camera_coord_factor = rend_data->camera_coord_factor;
+                uniforms.custom_vec2_value1.x = 0.03f; // glow_falloff
+                uniforms.custom_vec2_value1.y = 4.0f; // taps
+                uniforms.custom_vec2_value2 = rend_data->resolution;
+
+                [mtl_encoder setVertexBytes:&uniforms
+                                     length:sizeof(uniforms)
+                            attributeStride:sizeof(uniforms)
+                                    atIndex:0];
+                [mtl_encoder setVertexBuffer:mtl_verts.buffer
+                                      offset:mtl_verts.offset_in_buffer
+                                     atIndex:1];
+
+                [mtl_encoder setFragmentBytes:&uniforms
+                                       length:sizeof(uniforms)
+                                      atIndex:0];
+                [mtl_encoder setFragmentTexture:wnd_data->stage_color atIndex:0];
+
+                //- brt: draw
+                [mtl_encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                        indexCount:6
+                                         indexType:MTLIndexTypeUInt32
+                                       indexBuffer:mtl_indices.buffer
+                                 indexBufferOffset:mtl_indices.offset_in_buffer];
+                [mtl_encoder endEncoding];
+              }
+
+              //////////////////////////////
+              //- brt: horizontal blur pass
+              //
+              {
+                mtl_pass_desc.colorAttachments[0].texture = wnd_data->blur_colors[1];
+                mtl_pass_desc.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+                mtl_pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
+                mtl_encoder = [mtl_cmd_buffer renderCommandEncoderWithDescriptor:mtl_pass_desc];
+
+                //- brt: setup viewport
+                MTLViewport viewport = {};
+                viewport.width   = static_cast<float>(rep(rend_data->screen_size.width)) / 2.0;
+                viewport.height  = static_cast<float>(rep(rend_data->screen_size.height)) / 2.0;
+                viewport.znear   = 0.0f;
+                viewport.zfar    = 1.0f;
+                viewport.originX = 0.0f;
+                viewport.originY = 0.0f;
+                [mtl_encoder setViewport:viewport];
+
+                //- brt: setup scissor
+                MTLScissorRect rect = {0};
+                rect.x = 0;
+                rect.y = 0;
+                rect.width = viewport.width;
+                rect.height = viewport.height;
+                [mtl_encoder setScissorRect:rect];
+
+                //- brt: setup pipeline
+                [mtl_encoder setRenderPipelineState:rend_data->pipelines[rep(FragShader::BlurHorizVert)]]; 
+
+                //- brt: create draw data
+                MetalAlloc mtl_verts = metal_push_aligned(4 * sizeof(CmdBuffer::DrawVertex), 256);
+                MetalAlloc mtl_indices = metal_push_aligned(6 * sizeof(CmdBuffer::Index), 256);
+                {
+                  CmdBuffer::DrawVertex *verts = (CmdBuffer::DrawVertex *)mtl_verts.v;
+                  uint32_t *indices = (uint32_t*)mtl_indices.v;
+
+                  // 0 - 1  |  a - b
+                  // | \ |  |  | \ |
+                  // 3 - 2  |  d - c
+                  Vec2f a{ 0.f, 0.f };
+                  Vec2f c{ (float)viewport.width, (float)viewport.height };
+                  Vec2f b{ c.x, a.y };
+                  Vec2f d{ a.x, c.y };
+                  Vec2f uv_a{ 0.0f, 1.0f };
+                  Vec2f uv_c{ 1.0f, 0.0f };
+                  Vec2f uv_b{ uv_c.x, uv_a.y };
+                  Vec2f uv_d{ uv_a.x, uv_c.y };
+
+                  Vec4f color = hex_to_vec4f(0xffffffff);
+
+                  verts[0] = { .pos = a, .color = color, .uv = uv_a };
+                  verts[1] = { .pos = b, .color = color, .uv = uv_b };
+                  verts[2] = { .pos = c, .color = color, .uv = uv_c };
+                  verts[3] = { .pos = d, .color = color, .uv = uv_d };
+
+                  indices[0] = 0;
+                  indices[1] = 1;
+                  indices[2] = 2;
+                  indices[3] = 0;
+                  indices[4] = 2;
+                  indices[5] = 3;
+                }
+
+                //- brt: bind resources
+                MetalUniforms uniforms = {};
+                uniforms.resolution = Vec2f(viewport.width, viewport.height);
+                uniforms.time = rend_data->time;
+                uniforms.camera_pos = rend_data->camera_pos;
+                uniforms.camera_scale = rend_data->camera_scale;
+                uniforms.camera_coord_factor = rend_data->camera_coord_factor;
+                uniforms.custom_vec2_value1.x = 0.03f; // glow_falloff
+                uniforms.custom_vec2_value1.y = 4.0f; // taps
+                uniforms.custom_vec2_value2 = rend_data->resolution;
+
+                [mtl_encoder setVertexBytes:&uniforms
+                                     length:sizeof(uniforms)
+                            attributeStride:sizeof(uniforms)
+                                    atIndex:0];
+                [mtl_encoder setVertexBuffer:mtl_verts.buffer
+                                      offset:mtl_verts.offset_in_buffer
+                                     atIndex:1];
+
+                [mtl_encoder setFragmentBytes:&uniforms
+                                       length:sizeof(uniforms)
+                                      atIndex:0];
+                [mtl_encoder setFragmentTexture:wnd_data->blur_colors[0] atIndex:0];
+
+                //- brt: draw
+                [mtl_encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                        indexCount:6
+                                         indexType:MTLIndexTypeUInt32
+                                       indexBuffer:mtl_indices.buffer
+                                 indexBufferOffset:mtl_indices.offset_in_buffer];
+                [mtl_encoder endEncoding];
+              }
+
+              //- brt: composite pass
+              {
+                mtl_pass_desc.colorAttachments[0].texture = wnd_data->stage_color;
+                mtl_pass_desc.colorAttachments[0].loadAction = MTLLoadActionLoad;
+                mtl_pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
+                mtl_encoder = [mtl_cmd_buffer renderCommandEncoderWithDescriptor:mtl_pass_desc];
+
+                //- brt: setup viewport
+                MTLViewport viewport = {};
+                viewport.width   = static_cast<float>(rep(rend_data->screen_size.width));
+                viewport.height  = static_cast<float>(rep(rend_data->screen_size.height));
+                viewport.znear   = 0.0f;
+                viewport.zfar    = 1.0f;
+                viewport.originX = 0.0f;
+                viewport.originY = 0.0f;
+                [mtl_encoder setViewport:viewport];
+
+                //- brt: setup scissor
+                MTLScissorRect rect = {0};
+                {
+                  NSInteger fb_width = rep(rend_data->screen_size.width);
+                  NSInteger fb_height = rep(rend_data->screen_size.height);
+                  NSInteger w = rep(cmd->clip_rect.width);
+                  NSInteger h = rep(cmd->clip_rect.height);
+                  NSInteger x = rep(cmd->clip_rect.offset_x);
+                  NSInteger y = fb_height - (h + rep(cmd->clip_rect.offset_y));
+                  NSInteger x0 = std::max(0l, x);
+                  NSInteger y0 = std::max(0l, y);
+                  NSInteger x1 = std::min(fb_width, x+w);
+                  NSInteger y1 = std::min(fb_height, y+h);
+                  if (x1 <= x0 || y1 <= y0)
+                  {
+                    x0 = 0;
+                    x1 = 1;
+                    y0 = 0;
+                    y1 = 1;
+                  }
+                  rect.x = x0;
+                  rect.y = y0;
+                  rect.width = x1 - x0;
+                  rect.height = y1 - y0;
+                }
+                [mtl_encoder setScissorRect:rect];
+
+                //- brt: setup pipeline
+                [mtl_encoder setRenderPipelineState:rend_data->pipelines[rep(FragShader::Image)]]; 
+
+                //- brt: create draw data
+                MetalAlloc mtl_verts = metal_push_aligned(4 * sizeof(CmdBuffer::DrawVertex), 256);
+                MetalAlloc mtl_indices = metal_push_aligned(6 * sizeof(CmdBuffer::Index), 256);
+                {
+                  CmdBuffer::DrawVertex *verts = (CmdBuffer::DrawVertex *)mtl_verts.v;
+                  uint32_t *indices = (uint32_t*)mtl_indices.v;
+
+                  // 0 - 1  |  a - b
+                  // | \ |  |  | \ |
+                  // 3 - 2  |  d - c
+                  Vec2f a{ 0.f, 0.f };
+                  Vec2f c{ rep(rend_data->screen_size.width)+0.0f, rep(rend_data->screen_size.height)+0.0f };
+                  Vec2f b{ c.x, a.y };
+                  Vec2f d{ a.x, c.y };
+                  Vec2f uv_a{ 0.0f, 1.0f };
+                  Vec2f uv_c{ 1.0f, 0.0f };
+                  Vec2f uv_b{ uv_c.x, uv_a.y };
+                  Vec2f uv_d{ uv_a.x, uv_c.y };
+
+                  Vec4f color = hex_to_vec4f(0xffffffff);
+
+                  verts[0] = { .pos = a, .color = color, .uv = uv_a };
+                  verts[1] = { .pos = b, .color = color, .uv = uv_b };
+                  verts[2] = { .pos = c, .color = color, .uv = uv_c };
+                  verts[3] = { .pos = d, .color = color, .uv = uv_d };
+
+                  indices[0] = 0;
+                  indices[1] = 1;
+                  indices[2] = 2;
+                  indices[3] = 0;
+                  indices[4] = 2;
+                  indices[5] = 3;
+                }
+
+                //- brt: bind resources
+                MetalUniforms uniforms = {};
+                uniforms.resolution = rend_data->resolution;
+                uniforms.time = rend_data->time;
+                uniforms.camera_pos = rend_data->camera_pos;
+                uniforms.camera_scale = rend_data->camera_scale;
+                uniforms.camera_coord_factor = rend_data->camera_coord_factor;
+                uniforms.custom_vec2_value1.x = 1; // enable frost
+
+                [mtl_encoder setVertexBytes:&uniforms
+                                     length:sizeof(uniforms)
+                            attributeStride:sizeof(uniforms)
+                                    atIndex:0];
+                [mtl_encoder setVertexBuffer:mtl_verts.buffer
+                                      offset:mtl_verts.offset_in_buffer
+                                     atIndex:1];
+
+                [mtl_encoder setFragmentBytes:&uniforms
+                                       length:sizeof(uniforms)
+                                      atIndex:0];
+                [mtl_encoder setFragmentTexture:wnd_data->blur_colors[1] atIndex:0];
+
+                //- brt: draw
+                [mtl_encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                        indexCount:6
+                                         indexType:MTLIndexTypeUInt32
+                                       indexBuffer:mtl_indices.buffer
+                                 indexBufferOffset:mtl_indices.offset_in_buffer];
+              }
             }break;
             case CmdBuffer::CmdSort::CameraUpdate:
             {
@@ -685,6 +995,9 @@ namespace Render
                          atIndex:1];
 
     [mtl_encoder setFragmentTexture:wnd_data->stage_color atIndex:0];
+    [mtl_encoder setFragmentBytes:&uniforms
+                           length:sizeof(uniforms)
+                          atIndex:0];
 
     //- brt: draw
     [mtl_encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
@@ -721,10 +1034,13 @@ namespace Render
     MetalRenderData *rend_data = metal_render_backend_data();
 
     //- brt: destroy old resources
-    [wnd_data->scratch_color release];
     [wnd_data->stage_color release];
-    wnd_data->scratch_color = nil;
     wnd_data->stage_color = nil;
+    for EachIndex(idx, 2)
+    {
+      [wnd_data->blur_colors[idx] release];
+      wnd_data->blur_colors[idx] = nil;
+    }
 
     //- brt: create new resources
     MTLTextureDescriptor *color_desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
@@ -733,10 +1049,21 @@ namespace Render
                                                                                       mipmapped:NO];
     color_desc.textureType = MTLTextureType2D;
     color_desc.usage |= MTLTextureUsageRenderTarget;
-    //color_desc.storageMode = MTLStorageModeMemoryless;
     color_desc.storageMode = MTLStorageModePrivate;
-    wnd_data->scratch_color = [rend_data->mtl_device newTextureWithDescriptor:color_desc];
     wnd_data->stage_color = [rend_data->mtl_device newTextureWithDescriptor:color_desc];
+
+    //- brt: downsample & blur textures
+    MTLTextureDescriptor *blur_desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                                                         width:(NSUInteger)(rep(screen.width) / 2)
+                                                                                        height:(NSUInteger)(rep(screen.height) / 2)
+                                                                                     mipmapped:NO];
+    blur_desc.textureType = MTLTextureType2D;
+    blur_desc.usage |= MTLTextureUsageRenderTarget;
+    blur_desc.storageMode = MTLStorageModePrivate;
+    for EachIndex(idx, 2)
+    {
+      wnd_data->blur_colors[idx] = [rend_data->mtl_device newTextureWithDescriptor:blur_desc];
+    }
 
     //- brt: resize drawable
     rend_data->screen_size = screen;

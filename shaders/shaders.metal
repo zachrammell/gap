@@ -62,6 +62,24 @@ vs_main(const uint vert_id [[vertex_id]],
   return v2f;
 }
 
+half3 vibrance( half3 c, half v )
+{
+  half l = dot(c, half3(0.2126, 0.7152, 0.0722));
+  half3 chroma = c - half3(l);
+  half sat = length(chroma);
+  half factor;
+  if (v > 0.0)
+  {
+    factor = 1.0 + v * (1.0 - saturate(sat));
+  }
+  else
+  {
+    factor = 1.0 + v;
+  }
+
+  return half3(l) + chroma * factor;
+}
+
 // Borrowed from: https://stackoverflow.com/questions/1506299/applying-brightness-and-contrast-with-opengl-es
 half4 adjust_brightness(half4 color)
 {
@@ -73,10 +91,24 @@ half4 adjust_brightness(half4 color)
 
 fragment half4
 fs_image(Vertex2Fragment v2f [[stage_in]],
+         constant Uniforms &uniforms [[buffer(0)]],
          texture2d<half> texture [[texture(0)]])
 {
   constexpr sampler tex_sampler(mag_filter::linear, min_filter::linear);
   half4 color = v2f.color * texture.sample(tex_sampler, v2f.uv);
+  if (uniforms.custom_vec2_value1.x != 0)
+  {
+#if 1
+    color = half4(vibrance(color.rgb, -0.8), 1);
+    half4 tint = half4(0,0,0,1);
+    half tint_power = 0.25;
+#else
+    color = half4(vibrance(color.rgb, 3.0), 1);
+    half4 tint = half4(1,1,1,1);
+    half tint_power = 0.12;
+#endif
+    color = mix(color, tint, tint_power);
+  }
   return color;
 }
 
@@ -170,8 +202,32 @@ fs_text_subpixel(Vertex2Fragment v2f [[stage_in]],
 }
 
 fragment half4
-fs_blur_horiz(Vertex2Fragment v2f [[stage_in]])
+fs_blur_horiz(Vertex2Fragment v2f [[stage_in]],
+              constant Uniforms &uniforms [[buffer(0)]], 
+              texture2d<float> texture [[texture(0)]])
 {
-  return half4(1, 0, 0, 1);
+  //- brt: setup params
+  constexpr sampler tex_sampler(mag_filter::linear, min_filter::linear);
+  const float glow_falloff = uniforms.custom_vec2_value1.x;
+  const int taps = int(uniforms.custom_vec2_value1.y);
+  const float2 original_resolution = uniforms.custom_vec2_value2;
+  float2 tex = v2f.uv;
+  float flags = v2f.cust1;
+
+  //- brt: perform blur
+  float4 col = float4(0);
+  float dx = 1.0 / original_resolution.x;
+  float dy = 1.0 / original_resolution.y;
+  dx *= float(flags == 0.0);
+  dy *= float(flags > 0.0);
+  float k_total = 0.0;
+  for (int idx = -taps; idx <= taps; idx += 1)
+  {
+    float k = exp(-glow_falloff * idx * idx);
+    k_total += k;
+    col += k * texture.sample(tex_sampler, tex + float2(float(idx) * dx, float(idx) * dy));
+  }
+  half4 out = half4(col / k_total);
+  return out;
 }
 
