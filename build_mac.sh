@@ -116,7 +116,7 @@ then
     $link
     exit 0
   fi
-  $c_compile $freetype
+  $c_compile -Wno-macro-redefined $freetype
   $cxx_compile $gapsrc
   $link
   codesign --force --deep --sign - --entitlements ../res/entitlements.plist gap

@@ -19,7 +19,7 @@ namespace Arena
 
         // The actual arena header is much smaller than this, but skipping more bytes guarantees we can
         // add some more meta info about the header later.
-        constexpr size_t arena_header = 128;
+        constexpr uint64_t arena_header = 128;
         static_assert(sizeof(Arena) <= arena_header);
 
 #if BUILD_DEBUG
@@ -348,7 +348,7 @@ namespace Arena
 
     void pop_to(Arena* arena, Position pos)
     {
-        Position big_pos = Position{ std::max(arena_header, (size_t)(rep(pos))) };
+        Position big_pos = Position{ std::max(arena_header, rep(pos)) };
         Arena* current = arena->current;
         for (Arena* prev = nullptr; current->base_pos >= big_pos; current = prev)
         {

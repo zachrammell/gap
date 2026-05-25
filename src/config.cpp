@@ -731,13 +731,8 @@ namespace Config
             {
                 .light_mode = false,
                 .smooth_scroll = true,
-#if OS_MAC
-                .subpixel_font_aa = false,
-                .font_hinting = false,
-#else
                 .subpixel_font_aa = true,
                 .font_hinting = true,
-#endif
                 .render_whitespace = true,
             };
             return effects;
