@@ -15,13 +15,18 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            script: ./build.sh release
+            install: sudo apt install libglx-dev libx11-dev libxext-dev libxrandr-dev
+            build: ./build.sh release
           - os: windows-latest
-            script: ./build.bat release
+            install: echo "Nothing to install"
+            build: ${{ '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" && ./build.bat release' }}
           - os: macos-latest
-            script: ./build-mac.sh release
+            install: chmod +x ./build-mac.sh
+            build: ./build-mac.sh release
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install dependencies
+      run: ${{ matrix.install }}
     - name: Build
-      run: ${{ matrix.script }}
+      run: ${{ matrix.build }}
