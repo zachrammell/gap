@@ -1,0 +1,27 @@
+name: Build gap for all platforms
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: ./build-linux.sh release
+          - os: windows-latest
+            script: build.bat release
+          - os: macos-latest
+            script: ./build-mac.sh release
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: ${{ matrix.script }}
