@@ -15,13 +15,15 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            install: sudo apt install libglx-dev libx11-dev libxext-dev libxrandr-dev
+            install: sudo apt install libgl-dev libglx-dev libx11-dev libxext-dev libxrandr-dev
             build: ./build.sh release
           - os: windows-latest
-            install: echo "Nothing to install"
-            build: ${{ '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" && ./build.bat release' }}
+            install: true
+            build: |
+              call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+              ./build.bat release
           - os: macos-latest
-            install: chmod +x ./build-mac.sh
+            install: pwd; ls -al
             build: ./build-mac.sh release
 
     steps:
