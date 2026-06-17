@@ -15,9 +15,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            script: ./build-linux.sh release
+            script: ./build.sh release
           - os: windows-latest
-            script: build.bat release
+            script: ./build.bat release
           - os: macos-latest
             script: ./build-mac.sh release
 
