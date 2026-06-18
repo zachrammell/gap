@@ -15,20 +15,29 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            shell: bash
             install: sudo apt install libgl-dev libglx-dev libx11-dev libxext-dev libxrandr-dev
             build: ./build.sh release
+            
           - os: windows-latest
-            install: true
+            shell: cmd
+            install: echo "Skipping install for Windows"
             build: |
               call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-              ./build.bat release
+              build.bat release
+              
           - os: macos-latest
-            install: pwd; ls -al
-            build: ./build-mac.sh release
+            shell: bash
+            install: pwd && ls -al
+            build: bash ./build-mac.sh release
 
     steps:
     - uses: actions/checkout@v4
+    
     - name: Install dependencies
+      shell: ${{ matrix.shell }}
       run: ${{ matrix.install }}
+      
     - name: Build
+      shell: ${{ matrix.shell }}
       run: ${{ matrix.build }}
